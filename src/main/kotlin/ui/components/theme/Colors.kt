@@ -110,7 +110,7 @@ val styledWords = buildMap {
     listOf(
         "launched", "captured", "connected", "enabled",
         "cleared", "200", "COMPLETED", "PASSED", "SUCCESS",
-        "disconnected successfully"
+        "disconnected successfully", "Successfully"
     ).forEach { put(it, success) }
 
     listOf(
