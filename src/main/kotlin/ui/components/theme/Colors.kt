@@ -108,17 +108,17 @@ val warning = Color(0xFFF59E0B) to FontWeight.Bold
 
 val styledWords = buildMap {
     listOf(
-        "launched", "captured", "connected", "enabled",
-        "cleared", "200", "COMPLETED", "PASSED", "SUCCESS",
-        "disconnected successfully", "Successfully"
+        "Launched", "captured", "connected", "enabled",
+        "Cleared", "200", "COMPLETED", "PASSED",
+        "disconnected successfully", "successfully"
     ).forEach { put(it, success) }
 
     listOf(
         "disconnected", "disabled", "failed", "couldn't",
-        "number not found", "404:", "FAILED", "FAIL"
+        "number not found", "404:", "FAILED", "FAIL", "Force stopped"
     ).forEach { put(it, error) }
 
     listOf(
-        "restarted", "WARNED"
+        "restarted", "WARNED", "CANCELLED", "RUNNING"
     ).forEach { put(it, warning) }
 }
