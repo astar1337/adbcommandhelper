@@ -1,0 +1,31 @@
+appId: ${APP_ID}
+name: KAYO Valid Login
+tags:
+  - smoke
+  - critical
+  - login
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Log In"
+- tapOn: "Log In"
+- assertVisible: "Have an account?"
+- tapOn: "Sign In"
+- assertVisible:
+    id: "Icon"
+- assertVisible:
+    id: "EmailAddressField"
+- tapOn:
+    id: "EmailAddressField"
+- inputText: ${EMAIL}
+- assertVisible:
+    id: "GetStartedButton"
+- tapOn:
+    id: "GetStartedButton"
+- tapOn:
+    id: "PasswordField"
+- inputText: ${PASSWORD}
+- tapOn:
+    id: "LoginButtonInWelcomeBack"
+
+- runFlow: check_bottom_nav_kayo.yaml

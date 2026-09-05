@@ -1,0 +1,52 @@
+appId: ${APP_ID}
+name: DAZN Valid Login
+tags:
+  - smoke
+  - critical
+  - login
+---
+- launchApp
+
+# Step 2: Tap Log in
+- tapOn:
+    text: "Log in|Sign in|Anmelden"
+
+# Step 3: Enter email
+- extendedWaitUntil:
+    visible: "Get started"
+    timeout: 10000
+
+- tapOn:
+    text: "Email address|E-Mail"
+- inputText: ${EMAIL}
+
+# Step 4: Continue to password
+- tapOn:
+    text: "Get started|Continue|Weiter|Next"
+
+# Step 5: Enter password
+- extendedWaitUntil:
+    visible: "Password|Passwort"
+    timeout: 10000
+
+- tapOn:
+    text: "Password|Passwort"
+- inputText: ${PASSWORD}
+
+# Step 6: Sign in
+- tapOn:
+    text: "Sign in|Log in|Anmelden"
+
+# Step 7: Wait for home screen
+- extendedWaitUntil:
+    visible: "Home"
+    timeout: 15000
+
+# Step 1: Dismiss any popups/GDPR
+- runFlow: dismiss_popups.yaml
+
+# Step 8: Dismiss any post-login popups (onboarding, rate app, etc.)
+- runFlow: dismiss_popups.yaml
+
+# Step 9: Verify bottom navigation is present and functional
+- runFlow: check_bottom_nav.yaml

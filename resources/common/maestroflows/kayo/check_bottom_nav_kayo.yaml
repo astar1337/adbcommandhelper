@@ -1,0 +1,12 @@
+appId: ${APP_ID}
+name: Check Kayo Bottom Navigation
+---
+- assertVisible:
+    text: "Home"
+    index: -1
+- assertVisible: "Fixtures"
+- assertVisible: "Moments"
+- scrollUntilVisible:
+    element: "Browse"
+- assertVisible:
+    id: "user_profile_avatar"

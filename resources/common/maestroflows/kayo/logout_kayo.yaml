@@ -1,0 +1,25 @@
+appId: ${APP_ID}
+name: KAYO Logout
+tags:
+  - smoke
+  - login
+---
+- launchApp
+
+- assertVisible:
+    id: "user_profile_avatar"
+- tapOn:
+    id: "user_profile_avatar"
+- scrollUntilVisible:
+    element: "Log out"
+- tapOn: "Log out"
+- assertVisible:
+    id: "content"
+    index: 1
+- assertVisible: "Log 0ut"
+- tapOn: "Log 0ut"
+- extendedWaitUntil:
+    visible:
+      id: "home_toolbar_app_bar"
+    timeout: 10000
+- assertVisible: "Log In"

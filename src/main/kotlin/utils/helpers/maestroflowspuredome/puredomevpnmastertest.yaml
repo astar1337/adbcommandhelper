@@ -1,0 +1,49 @@
+appId: com.vpn.android.pureb2b
+---
+- launchApp
+- runFlow:
+    when:
+      visible:
+        id: "btn_login"
+    commands:
+      - evalScript: '❌ FLOW FAILED: App is not logged in. Please log in before running this again.'
+      - assertNotVisible:
+          id: "btn_login"
+- tapOn: "Feedback"
+- runFlow:
+    when:
+      visible: "Login"
+    commands:
+      - evalScript: '❌ FLOW FAILED: App is not logged in. Please log in before running this again.'
+      - assertNotVisible: "Login"
+- tapOn: "Gateways"
+- scrollUntilVisible:
+    element:
+      text: ${GATEWAY_NAME}
+    direction: DOWN
+    speed: 60
+    timeout: 10000
+    visibilityPercentage: 50
+    centerElement: true
+- tapOn: ${GATEWAY_NAME}
+- tapOn:
+    id: "btn_connect"
+- extendedWaitUntil:
+    visible: "Connected"
+    timeout: 5000
+    optional: true
+- runFlow:
+    when:
+      visible: "ASK ME LATER"
+    commands:
+      - tapOn: "ASK ME LATER"
+      - evalScript: '⚠️ Dismissed feedback popup - VPN disconnected'
+- runFlow:
+    when:
+      notVisible: "Connected"
+    commands:
+      - tapOn:
+          id: "btn_connect"
+      - extendedWaitUntil:
+          visible: "Connected"
+          timeout: 15000

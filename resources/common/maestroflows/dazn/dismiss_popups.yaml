@@ -1,0 +1,32 @@
+appId: ${APP_ID}
+name: Dismiss Popups
+---
+# GDPR / Cookie consent
+- tapOn:
+    text: "Accept All|Zustimmen|Alle akzeptieren|Accept"
+    optional: true
+
+# Android notification permission (Android 13+)
+- tapOn:
+    text: "Allow|Erlauben"
+    optional: true
+
+# Tracking transparency
+- tapOn:
+    text: "Don't Allow|Nicht erlauben"
+    optional: true
+
+# Rate the app
+- tapOn:
+    text: "Not Now|Nicht jetzt|Later|Cancel"
+    optional: true
+
+# Update prompt
+- tapOn:
+    text: "Not Now|Later|Skip|Überspringen"
+    optional: true
+
+# Onboarding skip (if shown)
+- tapOn:
+    text: "Skip|Überspringen"
+    optional: true

@@ -1,0 +1,35 @@
+appId: ${APP_ID}
+name: DAZN Logout
+tags:
+  - smoke
+  - login
+---
+- launchApp
+
+- runFlow: dismiss_popups.yaml
+
+- extendedWaitUntil:
+    visible: "Home"
+    timeout: 15000
+
+- tapOn:
+    id: "toolbar_user_profile"
+
+- scrollUntilVisible:
+    element:
+      text: "Sign Out|Sign out|Abmelden|Log out"
+    timeout: 5000
+
+- tapOn:
+    text: "Sign Out|Sign out|Abmelden|Log out"
+
+- tapOn:
+    text: "Sign Out|Confirm|Yes|Abmelden|Log out"
+    optional: true
+
+- extendedWaitUntil:
+    visible: "Log in|Sign in|Anmelden|Explore"
+    timeout: 10000
+
+- assertVisible:
+    text: "Log in|Sign in|Anmelden"

@@ -1,0 +1,70 @@
+appId: ${APP_ID}
+name: DAZN Create Freemium Account
+tags:
+  - regression
+  - signup
+---
+- launchApp
+
+# Step 1: Dismiss GDPR/popups
+- runFlow: ../shared/dismiss_popups.yaml
+
+# Step 2: Tap Sign Up / Get Started
+- tapOn:
+    text: "Sign up|Get Started|Registrieren|Explore"
+
+# Step 3: Dismiss any popups that appear after first interaction
+- runFlow: ../shared/dismiss_popups.yaml
+
+# Step 4: Enter email
+- extendedWaitUntil:
+    visible: "Email|E-Mail"
+    timeout: 10000
+
+- tapOn:
+    text: "Email|E-Mail"
+- inputText: ${EMAIL}
+
+# Step 5: Continue
+- tapOn:
+    text: "Get started|Continue|Weiter|Next"
+
+# Step 6: Create password
+- extendedWaitUntil:
+    visible: "Password|Passwort|Create a password"
+    timeout: 10000
+
+- tapOn:
+    text: "Password|Passwort|Create a password"
+- inputText: ${PASSWORD}
+
+# Step 7: Accept terms (if shown)
+- tapOn:
+    text: "I agree|Accept|Ich stimme zu"
+    optional: true
+
+# Step 8: Submit
+- tapOn:
+    text: "Create account|Sign up|Registrieren|Continue|Weiter"
+
+# Step 9: Handle onboarding screens (skip through)
+- tapOn:
+    text: "Skip|Überspringen|Not now|Later"
+    optional: true
+- tapOn:
+    text: "Skip|Überspringen|Not now|Later"
+    optional: true
+- tapOn:
+    text: "Skip|Überspringen|Not now|Later"
+    optional: true
+
+# Step 10: Wait for home
+- extendedWaitUntil:
+    visible: "Home"
+    timeout: 20000
+
+# Step 11: Dismiss any post-signup popups
+- runFlow: ../shared/dismiss_popups.yaml
+
+# Step 12: Verify bottom navigation
+- runFlow: ../shared/check_bottom_nav.yaml

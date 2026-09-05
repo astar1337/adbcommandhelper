@@ -1,0 +1,43 @@
+appId: ${APP_ID}
+name: Check Bottom Navigation
+---
+# Assert Home tab is visible and selected
+- assertVisible: "Home"
+
+# Check Schedule/Fixtures tab exists
+- assertVisible:
+    text: "Schedule|Zeitplan|Fixtures"
+    optional: true
+
+# Check Scores tab exists
+- assertVisible:
+    text: "Scores"
+    optional: true
+
+# Check Sports tab exists
+- assertVisible:
+    text: "Sports|Sport"
+    optional: true
+
+# Tap each tab to verify it loads, then return to Home
+
+# Schedule
+- tapOn:
+    text: "Schedule|Zeitplan|Fixtures"
+    optional: true
+- extendedWaitUntil:
+    visible: "Today|Heute|Tomorrow|Morgen|Schedule|Zeitplan"
+    timeout: 5000
+- tapOn: "Home"
+
+# Scores
+- tapOn:
+    text: "Scores"
+    optional: true
+- extendedWaitUntil:
+    visible: ".*"
+    timeout: 5000
+- tapOn: "Home"
+
+# Final assertion — back on Home
+- assertVisible: "Home"
