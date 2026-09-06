@@ -405,8 +405,9 @@ fun vpnButton(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .height(50.dp)
                                 .background(DropdownColors.footerBg)
-                                .padding(horizontal = 20.dp, vertical = 12.dp),
+                                .padding(horizontal = 20.dp, vertical = 6.dp),
                             horizontalArrangement = Arrangement.End
                         ) {
                             val closeInteraction = remember { MutableInteractionSource() }
