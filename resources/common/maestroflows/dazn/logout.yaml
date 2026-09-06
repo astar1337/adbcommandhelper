@@ -10,7 +10,7 @@ tags:
 
 - extendedWaitUntil:
     visible: "Home"
-    timeout: 15000
+    timeout: 10000
 
 - tapOn:
     id: "toolbar_user_profile"
