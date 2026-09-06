@@ -1,0 +1,27 @@
+appId: ${APP_ID}
+name: Binge Valid Login
+tags:
+  - smoke
+  - critical
+  - login
+---
+- launchApp:
+    clearState: true
+- assertVisible: "Sign In"
+- tapOn: "Sign In"
+- assertVisible:
+    id: "EmailAddressField"
+- tapOn:
+    id: "EmailAddressField"
+- inputText: ${EMAIL}
+- assertVisible:
+    id: "PasswordField"
+- tapOn:
+    id: "PasswordField"
+- inputText: ${PASSWORD}
+- assertVisible:
+    id: "LoginButtonInWelcomeBack"
+- tapOn:
+    id: "LoginButtonInWelcomeBack"
+
+- runFlow: check_bottom_nav_kayo.yaml

@@ -1,0 +1,16 @@
+appId: ${APP_ID}
+name: Check Binge Bottom Navigation
+---
+- extendedWaitUntil:
+    visible:
+      id: "user_profile_avatar"
+    timeout: 3000
+- assertVisible:
+    text: "Home"
+    index: -1
+- assertVisible: "Browse"
+- assertVisible: "Live"
+- assertVisible: "Bingelist"
+
+
+
