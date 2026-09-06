@@ -283,6 +283,7 @@ object Emoji {
     const val SPORT_MEDAL = "\uD83C\uDFC5"
     const val SCREENSHOT_CAMERA = "\uD83D\uDCF8"
     const val WIFI_OFF = "\uD83D"
+    const val TRIANGLE = "\u26A0\uFE0F"
     const val WIFI_ON = "\uD83D\uDCF6"
     const val SETTINGS_GEAR = "\u2699\uFE0F"
     const val RESTART = "\uD83D\uDD04"

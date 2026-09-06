@@ -32,6 +32,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import commands.Emoji.TRIANGLE
 import commands.RegionGateway
 import commands.regions
 import commands.toFlagEmoji
@@ -352,7 +353,7 @@ fun vpnButton(
 
                                                         CancellableProcess.wasCancelled() -> {
                                                             onCommandReplaced(
-                                                                "VPN: Connection to ${gateway.name} cancelled 🛑",
+                                                                "VPN: Connection to ${gateway.name} cancelled $TRIANGLE",
                                                                 Color(0xFFF59E0B)
                                                             )
                                                         }
@@ -366,7 +367,7 @@ fun vpnButton(
                                                     }
                                                 } catch (e: CancellationException) {
                                                     onCommandReplaced(
-                                                        "VPN: Connection to ${gateway.name} cancelled 🛑",
+                                                        "VPN: Connection to ${gateway.name} cancelled $TRIANGLE",
                                                         Color(0xFFF59E0B)
                                                     )
                                                     throw e
