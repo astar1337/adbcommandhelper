@@ -75,21 +75,26 @@ fun outputConsole(
                 pendingInstallPath = null
 
                 coroutineScope.launch {
-                    onNewMessage(ConsoleInstallMessage.Text("Starting install from downloaded file..."))
-                    val result = unzipAndInstall(
-                        zipPath = zipPath,
-                        zipName = File(zipPath).nameWithoutExtension,
-                        variant = variant,
-                        deviceId = deviceId,
-                        onProgress = { progress -> onNewMessage(ConsoleInstallMessage.Text(progress)) },
-                        permanentlyDelete = removeZipAfterInstall
-                    )
-                    onNewMessage(ConsoleInstallMessage.Text(result.message))
+                    try {
+                        onNewMessage(ConsoleInstallMessage.Text("Starting install from downloaded file..."))
+                        val result = unzipAndInstall(
+                            zipPath = zipPath,
+                            zipName = File(zipPath).nameWithoutExtension,
+                            variant = variant,
+                            deviceId = deviceId,
+                            onProgress = { progress -> onNewMessage(ConsoleInstallMessage.Text(progress)) },
+                            permanentlyDelete = removeZipAfterInstall
+                        )
+                        onNewMessage(ConsoleInstallMessage.Text(result.message))
+                    } catch (e: Exception) {
+                        onNewMessage(ConsoleInstallMessage.Text("Error: ${e.message ?: "Unknown error"}"))
+                    }
                 }
             },
             onDismiss = {
                 showVariantDialog = false
                 pendingInstallPath = null
+
             }
         )
     }

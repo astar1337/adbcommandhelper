@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import commands.Emoji
 import io.github.vinceglb.filekit.PlatformFile
 import io.github.vinceglb.filekit.dialogs.FileKitType
 import io.github.vinceglb.filekit.dialogs.compose.rememberFilePickerLauncher
@@ -44,28 +45,66 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.zip.ZipInputStream
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 
 
-enum class BuildVariant(val displayName: String, val folderName: String) {
-    DEBUG("Debug", "googleDebug"),
-    DEBUG_DEBUGGABLE("Debug Debuggable", "googleDebug"),
-    PROD_DEBUG("Prod Debug", "googleProdDebug"),
-    RELEASE("Release", "googleRelease"),
+enum class BuildType(val label: String, val defaultColor: Color, val hoverColor: Color) {
+    DEBUG("Debug", Color(0xFF2196F3), Color(0xFF1976D2)),
+    DEBUG_DEBUGGABLE("Debug Debuggable", Color(0xFF2196F3), Color(0xFF1976D2)),
+    PROD_DEBUG("Prod Debug", Color(0xFFFF9800), Color(0xFFE68900)),
+    RELEASE("Release", Color(0xFF4CAF50), Color(0xFF388E3C));
+}
+
+enum class Store(val displayName: String, val color: Color) {
+    GOOGLE("Google", Color(0xff0262f6)),   // blue
+    AMAZON("Amazon", Color(0xFFFFC107)),   // yellow
+    HUAWEI("Huawei", Color(0xFFE53935));   // red
+
+    companion object {
+        private val storeRegex = Regex("""-mobile-([A-Za-z]+)""", RegexOption.IGNORE_CASE)
+
+        fun fromZipName(zipName: String): Store? {
+            val storeName = storeRegex.findAll(zipName).lastOrNull()?.groupValues?.get(1)
+                ?: return null
+            return entries.firstOrNull { it.displayName.equals(storeName, ignoreCase = true) }
+        }
+    }
+}
+
+enum class BuildVariant(
+    val folderName: String,
+    val buildType: BuildType,
+    val store: Store
+) {
+    DEBUG_GOOGLE("googleDebug", BuildType.DEBUG, Store.GOOGLE),
+    DEBUG_DEBUGGABLE_GOOGLE("googleDebug", BuildType.DEBUG_DEBUGGABLE, Store.GOOGLE),
+    PROD_DEBUG_GOOGLE("googleProdDebug", BuildType.PROD_DEBUG, Store.GOOGLE),
+    RELEASE_GOOGLE("googleRelease", BuildType.RELEASE, Store.GOOGLE),
+
+    DEBUG_AMAZON("amazonDebug", BuildType.DEBUG, Store.AMAZON),
+    DEBUG_DEBUGGABLE_AMAZON("amazonDebug", BuildType.DEBUG_DEBUGGABLE, Store.AMAZON),
+    PROD_DEBUG_AMAZON("amazonProdDebug", BuildType.PROD_DEBUG, Store.AMAZON),
+    RELEASE_AMAZON("amazonRelease", BuildType.RELEASE, Store.AMAZON),
+
+    DEBUG_HUAWEI("huaweiDebug", BuildType.DEBUG, Store.HUAWEI),
+    DEBUG_DEBUGGABLE_HUAWEI("huaweiDebug", BuildType.DEBUG_DEBUGGABLE, Store.HUAWEI),
+    PROD_DEBUG_HUAWEI("huaweiProdDebug", BuildType.PROD_DEBUG, Store.HUAWEI),
+    RELEASE_HUAWEI("huaweiRelease", BuildType.RELEASE, Store.HUAWEI);
+
+    val label: String
+        get() = "${buildType.label} ${store.displayName}"
+
 }
 
 data class InstallResult(val success: Boolean, val message: String)
 
-/** Only these two are offered in the picker. */
 private val ALLOWED_EXTENSIONS = listOf("zip", "apk")
 
-/** Real Downloads dir (the old "/Downloads" was an invalid absolute path). */
 private val downloadsDir: File
     get() = File(System.getProperty("user.home"), "Downloads")
 
-/**
- * FileKit's PlatformFile -> java.io.File.
- * If `path` doesn't resolve on your FileKit version, try `this.file` instead.
- */
 private fun PlatformFile.toJavaFile(): File = File(path)
 
 
@@ -137,16 +176,15 @@ fun zipApkInstaller(
 
     if (showVariantDialog && selectedZipPath != null) {
         val zipPath = selectedZipPath!!
+        val zipName = File(zipPath).nameWithoutExtension
         variantSelectionDialog(
-            zipFileName = File(zipPath).nameWithoutExtension,
+            zipFileName = zipName,
             onVariantSelected = { variant ->
                 showVariantDialog = false
                 coroutineScope.launch {
                     isProcessing = true
                     try {
-                        val zipName = File(zipPath).nameWithoutExtension
                         onInstallStarted(ConsoleInstallMessage.Text("Unzipping $zipName..."))
-
                         val result = unzipAndInstall(
                             zipPath = zipPath,
                             zipName = zipName,
@@ -242,16 +280,18 @@ internal fun variantSelectionDialog(
     onVariantSelected: (BuildVariant) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val detectedStore = remember(zipFileName) { Store.fromZipName(zipFileName) }
+    val store = detectedStore ?: Store.GOOGLE
+    val variants = remember(store) { BuildVariant.entries.filter { it.store == store } }
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(12.dp),
             color = DropdownColors.cardBg,
             elevation = 16.dp,
-            modifier = Modifier
-                .width(500.dp)
-                .heightIn(max = 450.dp)
+            modifier = Modifier.width(500.dp)
         ) {
             Column {
+                // Header
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -264,16 +304,13 @@ internal fun variantSelectionDialog(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Select Build Variant",
+                            text = "${Emoji.MOBILE_PHONE_WITH_ARROW} Select Build Variant",
                             fontFamily = AppFontFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
                             color = DropdownColors.textPrimary
                         )
-                        IconButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.size(24.dp)
-                        ) {
+                        IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
                             Icon(
                                 imageVector = Icons.Default.Close,
                                 contentDescription = "Close",
@@ -283,6 +320,24 @@ internal fun variantSelectionDialog(
                         }
                     }
                     Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = buildAnnotatedString {
+                            if (detectedStore != null) {
+                                append("Store type: ")
+                            } else {
+                                withStyle(SpanStyle(color = Color(0xFFFFB300))) {
+                                    append("Store not detected, defaulting to ")
+                                }
+                            }
+                            withStyle(SpanStyle(color = store.color)) {
+                                append(store.displayName)
+                            }
+                        },
+                        fontFamily = AppFontFamily,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = Color.White
+                    )
                     Text(
                         text = zipFileName,
                         fontFamily = AppFontFamily,
@@ -294,12 +349,13 @@ internal fun variantSelectionDialog(
 
                 Divider(color = DropdownColors.divider)
 
+                // Buttons
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Android,
@@ -307,48 +363,34 @@ internal fun variantSelectionDialog(
                         tint = Color(0xFF3DDC84),
                         modifier = Modifier.size(40.dp)
                     )
+                    variants.forEach { variant ->
+                        key(variant) {
+                            val interaction = remember { MutableInteractionSource() }
+                            val isHovered by interaction.collectIsHoveredAsState()
 
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    BuildVariant.entries.forEach { variant ->
-                        val interaction = remember { MutableInteractionSource() }
-                        val isHovered by interaction.collectIsHoveredAsState()
-
-                        Button(
-                            onClick = { onVariantSelected(variant) },
-                            interactionSource = interaction,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                backgroundColor = when {
-                                    isHovered -> when (variant) {
-                                        BuildVariant.DEBUG -> Color(0xFF1976D2)
-                                        BuildVariant.DEBUG_DEBUGGABLE -> Color(0xFF1976D2)
-                                        BuildVariant.PROD_DEBUG -> Color(0xFFE68900)
-                                        BuildVariant.RELEASE -> Color(0xFF388E3C)
-                                    }
-
-                                    else -> when (variant) {
-                                        BuildVariant.DEBUG -> Color(0xFF2196F3)
-                                        BuildVariant.DEBUG_DEBUGGABLE -> Color(0xFF1976D2)
-                                        BuildVariant.PROD_DEBUG -> Color(0xFFFF9800)
-                                        BuildVariant.RELEASE -> Color(0xFF4CAF50)
-                                    }
-                                },
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(8.dp),
-                            elevation = ButtonDefaults.elevation(
-                                defaultElevation = 0.dp,
-                                pressedElevation = 0.dp,
-                                hoveredElevation = 0.dp
-                            )
-                        ) {
-                            Text(
-                                text = variant.displayName,
-                                fontFamily = AppFontFamily,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
+                            Button(
+                                onClick = { onVariantSelected(variant) },
+                                interactionSource = interaction,
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.buttonColors(
+                                    backgroundColor = if (isHovered) variant.buildType.hoverColor
+                                    else variant.buildType.defaultColor,
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                elevation = ButtonDefaults.elevation(
+                                    defaultElevation = 0.dp,
+                                    pressedElevation = 0.dp,
+                                    hoveredElevation = 0.dp
+                                )
+                            ) {
+                                Text(
+                                    text = variant.label,
+                                    fontFamily = AppFontFamily,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                            }
                         }
                     }
                 }
