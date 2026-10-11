@@ -1,53 +1,63 @@
 package utils.helpers
-import commands.appConfigs
-import utils.helpers.AppConfig.adbPath
 
+import commands.appConfigs
+import java.util.concurrent.ConcurrentHashMap
 
 data class InstalledApp(
     val key: String,
     val displayName: String,
-    val hasProd: Boolean,
-    val hasStaging: Boolean
+    val prodPackage: String? = null,
+    val stagPackage: String? = null,
+    val betaPackage: String? = null
 )
 
 object AppDetection {
     const val PUREDOME_PACKAGE = "com.vpn.android.pureb2b"
 
-    private fun isPackageInstalled(deviceId: String, packageName: String): Boolean {
-        if (deviceId.isEmpty()) return false
-        val command =
-            "$adbPath -s $deviceId shell pm list packages | grep -x \"package:$packageName\""
-        return AdbDevices.runCommandFromMap(command).isSuccess
+    private val lastKnown = ConcurrentHashMap<String, List<InstalledApp>>()
+
+    private fun listPackages(deviceId: String): Set<String>? {
+        if (deviceId.isEmpty()) return null
+        val output = runAdbWithTimeout(
+            AppConfig.adbPath, "-s", deviceId, "shell", "pm list packages",
+            timeoutSeconds = 2
+        )
+        val packages = output.lineSequence()
+            .map { it.trim() }
+            .filter { it.startsWith("package:") }
+            .map { it.removePrefix("package:") }
+            .toSet()
+        // A working device always has system packages, so empty means the call failed
+        return packages.ifEmpty { null }
     }
+
+    private fun isPackageInstalled(deviceId: String, packageName: String): Boolean =
+        listPackages(deviceId)?.contains(packageName) == true
 
     fun isPureDomeInstalled(deviceId: String): Boolean =
         isPackageInstalled(deviceId, PUREDOME_PACKAGE)
 
-    fun getInstalledApps(deviceId: String): List<InstalledApp> {
+    fun installedPackages(deviceId: String): Set<String>? = listPackages(deviceId)
+
+    fun getInstalledApps(deviceId: String, deviceType: DeviceType? = null): List<InstalledApp> {
         if (deviceId.isEmpty()) return emptyList()
 
-        val installedApps = mutableListOf<InstalledApp>()
+        val installed = listPackages(deviceId)
+            ?: return lastKnown[deviceId] ?: emptyList()
 
-        appConfigs.forEach { (key, config) ->
-            val prodCommand = "$adbPath -s $deviceId shell pm list packages | grep -x \"package:${config.prodPackage}\""
-            val prodInstalled = AdbDevices.runCommandFromMap(prodCommand).isSuccess
-
-            val stagCommand = "$adbPath -s $deviceId shell pm list packages | grep -x \"package:${config.stagPackage}\""
-            val stagInstalled = AdbDevices.runCommandFromMap(stagCommand).isSuccess
-
-            if (prodInstalled || stagInstalled) {
-                installedApps.add(
-                    InstalledApp(
-                        key = key,
-                        displayName = config.displayName,
-                        hasProd = prodInstalled,
-                        hasStaging = stagInstalled
-                    )
-                )
-            }
+        val apps = appConfigs.mapNotNull { (key, config) ->
+            val prod = config.prodCandidates(deviceType).firstOrNull { it in installed }
+            val stag = config.stagCandidates(deviceType).firstOrNull { it in installed }
+            val beta = config.betaCandidates().firstOrNull { it in installed }
+            if (prod == null && stag == null && beta == null) null
+            else InstalledApp(key, config.displayName, prodPackage = prod, stagPackage = stag, betaPackage = beta)
         }
-        println(installedApps)
-        return installedApps
 
+        lastKnown[deviceId] = apps
+        return apps
+    }
+
+    fun forget(deviceId: String) {
+        lastKnown.remove(deviceId)
     }
 }

@@ -1,78 +1,44 @@
 package utils.helpers
 
 import commands.appConfigs
-import utils.helpers.AppDetection.getInstalledApps
 
 fun deleteAllInstalledApps(deviceId: String): DeleteAllAppsResult {
+    val installed = AppDetection.installedPackages(deviceId)
+        ?: return DeleteAllAppsResult(0, emptyList(), "Couldn't read installed packages from the device")
 
-    val installedApps = getInstalledApps(deviceId)
+    val targets = appConfigs.values.flatMap { config ->
+        config.allPackages.filter { it in installed }.map { pkg -> config to pkg }
+    }
 
-    if (installedApps.isEmpty()) {
-        return DeleteAllAppsResult(
-            totalDeleted = 0,
-            results = emptyList(),
-            summary = "No apps found to delete"
+    if (targets.isEmpty()) {
+        return DeleteAllAppsResult(0, emptyList(), "No apps found to delete")
+    }
+
+    val deletionResults = targets.map { (config, pkg) ->
+        val env = when (pkg) {
+            in config.allStagPackages -> "STAG"
+            in config.allBetaPackages -> "BETA"
+            else -> "PROD"
+        }
+        val result = AdbDevices.runCommandFromMap("${AppConfig.adbPath} -s $deviceId uninstall $pkg")
+        AppDeletionResult(
+            appName = "${config.displayName} $env ($pkg)",
+            packageName = pkg,
+            success = result.isSuccess && result.rawOutput.contains("Success", ignoreCase = true)
         )
     }
 
-    val deletionResults = mutableListOf<AppDeletionResult>()
-    var successCount = 0
+    val succeeded = deletionResults.filter { it.success }
+    val failed = deletionResults.filterNot { it.success }
 
-    installedApps.forEach { app ->
-        val config = appConfigs[app.key] ?: return@forEach
-
-        if (app.hasProd) {
-            val prodDeleteCommand = "adb -s $deviceId uninstall ${config.prodPackage}"
-            val prodResult = AdbDevices.runCommandFromMap(prodDeleteCommand)
-
-            deletionResults.add(
-                AppDeletionResult(
-                    appName = "${app.displayName} PROD",
-                    packageName = config.prodPackage,
-                    success = prodResult.isSuccess
-                )
-            )
-
-            if (prodResult.isSuccess) successCount++
-        }
-        // Delete staging version if installed
-        if (app.hasStaging) {
-            val stagDeleteCommand = "adb -s $deviceId uninstall ${config.stagPackage}"
-            val stagResult = AdbDevices.runCommandFromMap(stagDeleteCommand)
-
-            deletionResults.add(
-                AppDeletionResult(
-                    appName = "${app.displayName} STAG",
-                    packageName = config.stagPackage,
-                    success = stagResult.isSuccess
-                )
-            )
-
-            if (stagResult.isSuccess) successCount++
-        }
-    }
-
-    val totalAttempts = deletionResults.size
-
-    val summary = if (successCount == totalAttempts) {
-        val deletedApps = deletionResults
-            .filter { it.success }
-            .joinToString(", ") { it.appName }
-        "Successfully deleted: $deletedApps"
-    } else if (successCount > 0) {
-        val deletedApps = deletionResults
-            .filter { it.success }
-            .joinToString(", ") { it.appName }
-        val failedApps = deletionResults
-            .filter { !it.success }
-            .joinToString(", ") { it.appName }
-        "Deleted: $deletedApps\nFailed: $failedApps"
-    } else {
-        "Failed to delete all apps"
+    val summary = when {
+        failed.isEmpty() -> "Successfully deleted: ${succeeded.joinToString(", ") { it.appName }}"
+        succeeded.isNotEmpty() -> "Deleted: ${succeeded.joinToString(", ") { it.appName }}\nFailed: ${failed.joinToString(", ") { it.appName }}"
+        else -> "Failed to delete all apps"
     }
 
     return DeleteAllAppsResult(
-        totalDeleted = successCount,
+        totalDeleted = succeeded.size,
         results = deletionResults,
         summary = summary
     )

@@ -95,12 +95,14 @@ fun mainScreen() {
 
     var isWorkflowDialogOpen by remember { mutableStateOf(false) }
     var cachedDeviceName by remember { mutableStateOf("") }
-    var cachedSdk by remember { mutableStateOf(0) }
-
     var isConsoleExpanded by remember { mutableStateOf(true) }
     var outputColor by remember { mutableStateOf<Color?>(null) }
     var consoleMessages by remember { mutableStateOf(listOf<ConsoleInstallMessage>()) }
     var showClearMessage by remember { mutableStateOf(false) }
+
+    //caching info
+    var cachedSdk by remember { mutableStateOf(0) }
+    var cachedDeviceType by remember { mutableStateOf(DeviceType.MOBILE) }
 
     fun resetAppAndEnvState() {
         selectedAppKey = ""
@@ -129,15 +131,10 @@ fun mainScreen() {
     }
 
     fun buildEnvList(app: InstalledApp): Map<String, String> {
-        val config = appConfigs[app.key] ?: return emptyMap()
         val envMap = mutableMapOf<String, String>()
-
-        if (app.hasProd) {
-            envMap["PRODUCTION"] = config.prodPackage
-        }
-        if (app.hasStaging) {
-            envMap["STAGING"] = config.stagPackage
-        }
+        app.prodPackage?.let { envMap["PRODUCTION"] = it }
+        app.betaPackage?.let { envMap["BETA"] = it }
+        app.stagPackage?.let { envMap["STAGING"] = it }
         return envMap
     }
 
@@ -197,7 +194,7 @@ fun mainScreen() {
         if (selectedDeviceId.isEmpty()) return
 
         val newInstalledApps = withContext(Dispatchers.IO) {
-            AppDetection.getInstalledApps(selectedDeviceId)
+            AppDetection.getInstalledApps(selectedDeviceId, cachedDeviceType)
         }
 
         if (installedApps == newInstalledApps) return
@@ -259,26 +256,26 @@ fun mainScreen() {
     LaunchedEffect(selectedDeviceId) {
         if (selectedDeviceId.isEmpty()) return@LaunchedEffect
 
-        withContext(Dispatchers.IO) {
-            DeviceInfoCache.fetchAndCache(selectedDeviceId)
-        }
-        cachedDeviceName = DeviceInfoCache.getNameSync(selectedDeviceId)
-        cachedSdk = DeviceInfoCache.getSdkSync(selectedDeviceId)
+        val info = DeviceInfoCache.fetchAndCache(selectedDeviceId)
+        cachedDeviceName = info.name
+        cachedSdk = info.sdk
+        cachedDeviceType = info.deviceType
 
         refreshInstalledApps()
 
         while (true) {
-            delay(5000)
+            delay(1500)
             refreshInstalledApps()
         }
     }
+    LaunchedEffect(selectedDeviceId, selectedEnvValue, refreshNotifCounter, cachedDeviceType, cachedSdk) {
+        val type = cachedDeviceType
+        if (type == DeviceType.TV) return@LaunchedEffect      // detecting or TV: skip
+        if (selectedDeviceId.isEmpty() || selectedEnvValue.isEmpty()) return@LaunchedEffect
 
-    LaunchedEffect(selectedDeviceId, selectedEnvValue, refreshNotifCounter) {
-        if (selectedDeviceId.isNotEmpty() && selectedEnvValue.isNotEmpty()) {
-            if (refreshNotifCounter > 0) delay(1500)
-            currentNotifState = withContext(Dispatchers.IO) {
-                getNotificationState(selectedDeviceId, selectedEnvValue)
-            }
+        if (refreshNotifCounter > 0) delay(500)   // give pm grant/revoke time to apply
+        currentNotifState = withContext(Dispatchers.IO) {
+            getNotificationState(selectedDeviceId, selectedEnvValue, cachedSdk)
         }
     }
 
@@ -312,14 +309,19 @@ fun mainScreen() {
                 selectedDeviceId = ""
                 selectedHardwareSource = "Select a device..."
                 hasSelectedDevice = false
+                cachedDeviceType = DeviceType.MOBILE
+                cachedSdk = 0
                 resetAppAndEnvState()
             }
 
             if (selectedDeviceId.isNotEmpty() && selectedDeviceId !in newDevices) {
                 DeviceInfoCache.invalidate(selectedDeviceId)
+                AppDetection.forget(selectedDeviceId)
                 selectedDeviceId = ""
                 selectedHardwareSource = "Select your source..."
                 hasSelectedDevice = false
+                cachedDeviceType = DeviceType.MOBILE
+                cachedSdk = 0
                 resetAppAndEnvState()
             }
 
@@ -385,12 +387,6 @@ fun mainScreen() {
         }
     }
 
-    LaunchedEffect(showClearMessage) {
-        if (showClearMessage) {
-            delay(1000)
-            showClearMessage = false
-        }
-    }
     val emptyStateText = when {
         showClearMessage -> "Console cleared"
         consoleMessages.isEmpty() -> "Awaiting output from console..."
@@ -695,13 +691,13 @@ fun mainScreen() {
                                         appSelectDropDown(
                                             enabled = isDeviceSelected && devicesList.isNotEmpty() && availableAppList.isNotEmpty(),
                                             selectedHardwareSource = selectedHardwareSource,
-                                            selectedEnvSource = selectedEnvSource,
                                             hasSelectedDevice = hasSelectedDevice,
                                             hasSelectedApp = hasSelectedApp,
                                             hasSelectedEnv = hasSelectedEnv,
                                             commandOptions = availableAppList,
                                             selectedAppKey = selectedAppKey,
                                             selectedAppSource = selectedAppSource,
+                                            selectedPackage = selectedEnvValue,
                                             onCommandSelected = { appKey ->
                                                 val app = installedApps.find { it.key == appKey }
                                                 if (app != null) {
@@ -782,16 +778,24 @@ fun mainScreen() {
                                         isAppSelected = isAppSelected
                                     )
                                 } else {
-                                    commandDropdown(
-                                        enabled = isDeviceSelected && devicesList.isNotEmpty() && isAppSelected && isEnvSelected,
-                                        commandOptions = commandOptions(
+                                    val quickCommands = remember(
+                                        selectedDeviceId, selectedEnvValue, selectedAppKey,
+                                        selectedEnvSource, currentNotifState, cachedSdk, cachedDeviceType
+                                    ) {
+                                        commandOptions(
                                             deviceId = selectedDeviceId,
                                             envPrefix = selectedEnvValue,
                                             appKey = selectedAppKey,
                                             envName = selectedEnvSource,
                                             notifState = currentNotifState,
-
-                                        ),
+                                            sdk = cachedSdk,
+                                            deviceType = cachedDeviceType
+                                        )
+                                    }
+                                    commandDropdown(
+                                        enabled = isDeviceSelected && devicesList.isNotEmpty() && isAppSelected && isEnvSelected,
+                                        commandOptions = quickCommands,
+                                        deviceType = cachedDeviceType,
                                         onCommandSelected = { selectedCommand = it },
                                         onCommandExecuted = { newMessage,color ->
                                             consoleMessages = consoleMessages + newMessage
@@ -887,6 +891,7 @@ fun mainScreen() {
                 onOKClick = {},
                 onToggleClick = { showNavBar = !showNavBar },
                 showToggleButton = true,
+                showOverview = cachedDeviceType == DeviceType.MOBILE
             )
         }
 

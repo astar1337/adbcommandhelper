@@ -43,7 +43,8 @@ fun sideNavigationBar(
     onOKClick: () -> Unit,
     onToggleClick: () -> Unit,
     showToggleButton: Boolean = true,
-    isNavBarVisible: Boolean = false
+    isNavBarVisible: Boolean = false,
+    showOverview: Boolean = true
 ) {
     val density = LocalDensity.current
     var offsetX by remember { mutableStateOf(with(density) { (-50).dp.toPx() }) }
@@ -120,20 +121,21 @@ fun sideNavigationBar(
                         }
                     )
 
-                    navActionButton(
-                        icon = Icons.Default.ViewCarousel,
-                        xOffset = 0f,
-                        labelPosition = LabelPosition.BELOW,
-                        label = "Overview",
-                        yOffset = buttonSpacing * expandProgress,
-                        onClick = {
-                            coroutineScope.launch {
-                                val command = moreSettings(deviceId)["Overview"] ?: return@launch
-                                runCommandFromMap(command)
-                                onHomeClick()
+                    if (showOverview) {
+                        navActionButton(
+                            icon = Icons.Default.ViewCarousel,
+                            xOffset = 0f,
+                            labelPosition = LabelPosition.BELOW,
+                            label = "Overview",
+                            yOffset = buttonSpacing * expandProgress,
+                            onClick = {
+                                coroutineScope.launch {
+                                    val command = moreSettings(deviceId)["Overview"] ?: return@launch
+                                    runCommandFromMap(command)
+                                }
                             }
-                        }
-                    )
+                        )
+                    }
 
                     navActionButton(
                         icon = Icons.Default.Check,

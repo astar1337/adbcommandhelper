@@ -16,7 +16,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +45,9 @@ import utils.helpers.getAirplaneModeState
 import utils.helpers.getWifiState
 import utils.helpers.takeScreenshotToClipboard
 import utils.helpers.AppConfig.adbPath
+import commands.Emoji.TV
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 
 
@@ -75,41 +77,69 @@ fun deviceSourceDropDown(
     var isVideoRecording by remember { mutableStateOf(false) }
     var showScrcpyInstallDialog by remember { mutableStateOf(false) }
 
-    val deviceNameCache = remember { mutableStateMapOf<String, String>() }
+    val deviceInfoMap = remember { mutableStateMapOf<String, DeviceInfoCache.DeviceInfo>() }
+    var deviceIp by remember { mutableStateOf("") }
+
+    val isSelectedTv = deviceInfoMap[selectedHardwareSource]?.deviceType == DeviceType.TV
+
+    LaunchedEffect(commandOptions) {
+        // drop devices that are no longer connected
+        deviceInfoMap.keys.retainAll(commandOptions.toSet())
+
+        commandOptions
+            .filterNot { it.startsWith("Select", true) || it.contains("No devices", true) }
+            .filter { it !in deviceInfoMap }
+            .forEach { id ->
+                val info = DeviceInfoCache.fetchAndCache(id)
+                if (info.isValid) deviceInfoMap[id] = info
+            }
+    }
+    LaunchedEffect(showDeviceInfoDialog, selectedHardwareSource) {
+        if (showDeviceInfoDialog) {
+            deviceIp = "Loading..."
+            deviceIp = withContext(Dispatchers.IO) { getDeviceWifiIp(selectedHardwareSource) }
+        }
+    }
+
+
+    fun deviceLabel(deviceId: String): String =
+        deviceInfoMap[deviceId]?.name?.ifEmpty { null } ?: deviceId
 
     fun formatDeviceDisplay(deviceId: String): String {
         if (deviceId.startsWith("Select", ignoreCase = true)) return deviceId
         if (deviceId.contains("No devices", ignoreCase = true)) return deviceId
 
-        val emoji = if (deviceId.startsWith("emulator", ignoreCase = true)) EMULATOR_COMPUTER else PHONE_MOBILE
-        val deviceName = deviceNameCache.getOrPut(deviceId) { getDeviceName(deviceId) }
-        val sdkRelease = getAndroidSdkRelease(deviceId)
+        val info = deviceInfoMap[deviceId] ?: return deviceId   // still loading
 
-        return if (deviceName.isNotEmpty() && deviceName != deviceId) {
-            "($sdkRelease) $emoji $deviceName"
-        } else {
-            "($sdkRelease) $emoji $deviceId"
+        val emoji = when {
+            info.deviceType == DeviceType.TV -> TV                     // TV first, so Android TV emulators show 📺
+            deviceId.startsWith("emulator", ignoreCase = true) -> EMULATOR_COMPUTER
+            else -> PHONE_MOBILE
         }
+        return "(${info.sdkRelease}) $emoji ${deviceLabel(deviceId)}"
     }
+
     val displayText = when {
         commandOptions.size == 1 -> commandOptions.first()
         selectedHardwareSource.startsWith("Select") -> "Select a device..."
         else -> selectedHardwareSource
     }
-    LaunchedEffect(showDeviceMenu, selectedHardwareSource) {
-        if (showDeviceMenu && selectedHardwareSource.isNotEmpty() && !selectedHardwareSource.startsWith("Select")) {
-            isDeviceMenuLoading = true
-            kotlinx.coroutines.delay(200)
-            val wifi = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                getWifiState(selectedHardwareSource)
-            }
-            val airplane = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                getAirplaneModeState(selectedHardwareSource)
-            }
-            isWifiOn = wifi
-            isAirplaneModeOn = airplane
-            isDeviceMenuLoading = false
+    LaunchedEffect(showDeviceMenu, selectedHardwareSource, isSelectedTv) {
+        if (!showDeviceMenu || selectedHardwareSource.isEmpty() || selectedHardwareSource.startsWith("Select")) {
+            return@LaunchedEffect
         }
+        if (isSelectedTv) {
+            isDeviceMenuLoading = false
+            return@LaunchedEffect
+        }
+
+        isDeviceMenuLoading = true
+        kotlinx.coroutines.delay(200)
+        val wifi = withContext(Dispatchers.IO) { getWifiState(selectedHardwareSource) }
+        val airplane = withContext(Dispatchers.IO) { getAirplaneModeState(selectedHardwareSource) }
+        isWifiOn = wifi
+        isAirplaneModeOn = airplane
+        isDeviceMenuLoading = false
     }
 
     Card(
@@ -170,7 +200,7 @@ fun deviceSourceDropDown(
                                     elevation = 4.dp
                                 ) {
                                     Text(
-                                        "Device Information",
+                                        text = "Device Information ${if (deviceInfoMap[selectedHardwareSource]?.deviceType == DeviceType.TV) TV else PHONE_MOBILE}",
                                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                                         fontFamily = AppFontFamily,
                                         fontSize = 12.sp,
@@ -259,116 +289,143 @@ fun deviceSourceDropDown(
                                             )
                                         }
                                     } else {
-                                        deviceMenuItem(
-                                            label = if (isWifiOn) "Turn OFF WiFi" else "Turn ON WiFi",
-                                            statusColor = if (isWifiOn) Color(0xFFEF4444) else Color(0xFF22C55E),
-                                            onClick = {
-                                                coroutineScope.launch {
-                                                    val action = if (isWifiOn) "disabled" else "enabled"
-                                                    val cmd = "$adbPath  -s $selectedHardwareSource shell svc wifi ${if (isWifiOn) "disable" else "enable"}"
-                                                    AdbDevices.runCommandFromMap(cmd)
-                                                    isWifiOn = !isWifiOn
-                                                    onCommandExecuted("WiFi $action on ${getDeviceName(selectedHardwareSource)} at ${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}")
-                                                }
-                                            }
-                                        )
-                                        deviceMenuItem(
-                                            label = if (isAirplaneModeOn) "Turn OFF Airplane Mode" else "Turn ON Airplane Mode",
-                                            statusColor = if (isAirplaneModeOn) Color(0xFFEF4444) else Color(0xFF22C55E),
-                                            onClick = {
-                                                coroutineScope.launch {
-                                                    val action = if (isAirplaneModeOn) "disabled" else "enabled"
-                                                    val cmd = "$adbPath -s $selectedHardwareSource shell cmd connectivity airplane-mode ${if (isAirplaneModeOn) "disable" else "enable"}"
-                                                    AdbDevices.runCommandFromMap(cmd)
-                                                    isAirplaneModeOn = !isAirplaneModeOn
-                                                    onCommandExecuted("Airplane Mode $action on ${getDeviceName(selectedHardwareSource)} at ${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}")
-                                                }
-                                            }
-                                        )
-                                        deviceMenuItem(
-                                            label = "Open Settings",
-                                            onClick = {
-                                                coroutineScope.launch {
-                                                    AdbDevices.runCommandFromMap("$adbPath -s $selectedHardwareSource shell am start -a android.settings.SETTINGS")
-                                                    showDeviceMenu = false
-                                                }
-                                            }
-                                        )
-                                        deviceMenuItem(
-                                            label = "Open Network Settings",
-                                            onClick = {
-                                                coroutineScope.launch {
-                                                    AdbDevices.runCommandFromMap("$adbPath -s $selectedHardwareSource shell am start -a android.settings.WIRELESS_SETTINGS")
-                                                    showDeviceMenu = false
-                                                }
-                                            }
-                                        )
-                                        Divider(
-                                            color = DropdownColors.divider,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                        )
-                                        deviceMenuItem(
-                                            label = "Open ScreenCopy",
-                                            onClick = {
-                                                if (!VideoRecorder.isScrcpyInstalled()) {
-                                                    showDeviceMenu = false
-                                                    showScrcpyInstallDialog = true
-                                                } else {
-                                                    try {
-                                                        val pb = ProcessBuilder(AppConfig.scrcpyPath, "-s", selectedHardwareSource)
-                                                        val env = pb.environment()
-                                                        val adbDir = java.io.File(adbPath).parent ?: ""
-                                                        val scrcpyDir = java.io.File(AppConfig.scrcpyPath).parent ?: ""
-                                                        env["PATH"] = listOf(adbDir, scrcpyDir, "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin")
-                                                            .filter { it.isNotEmpty() }
-                                                            .joinToString(":") + ":" + (env["PATH"] ?: "")
-
-                                                        pb.redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                                                            .redirectError(ProcessBuilder.Redirect.DISCARD)
-                                                            .start()
-
-                                                        onCommandExecuted("ScreenCopy launched on ${getDeviceName(selectedHardwareSource)} at ${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}")
-                                                    } catch (e: Exception) {
-                                                        onCommandExecuted("Couldn't launch ScreenCopy: ${e.message}")
+                                        if (!isSelectedTv) {
+                                            deviceMenuItem(
+                                                label = if (isWifiOn) "Turn OFF WiFi" else "Turn ON WiFi",
+                                                statusColor = if (isWifiOn) Color(0xFFEF4444) else Color(0xFF22C55E),
+                                                onClick = {
+                                                    coroutineScope.launch {
+                                                        val action = if (isWifiOn) "disabled" else "enabled"
+                                                        val cmd =
+                                                            "$adbPath  -s $selectedHardwareSource shell svc wifi ${if (isWifiOn) "disable" else "enable"}"
+                                                        AdbDevices.runCommandFromMap(cmd)
+                                                        isWifiOn = !isWifiOn
+                                                        onCommandExecuted(
+                                                            "WiFi $action on ${
+                                                                deviceLabel(
+                                                                    selectedHardwareSource
+                                                                )
+                                                            } at ${
+                                                                java.time.LocalDateTime.now().format(
+                                                                    java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+                                                                )
+                                                            }"
+                                                        )
                                                     }
-                                                    showDeviceMenu = false
                                                 }
-                                            }
-                                        )
-                                        deviceMenuItem(
-                                            label = "Take Screenshot",
-                                            onClick = {
-                                                coroutineScope.launch {
-                                                    takeScreenshotToClipboard(selectedHardwareSource)
-                                                    showDeviceMenu = false
-                                                    onCommandExecuted("Screenshot captured to clipboard from ${getDeviceName(selectedHardwareSource)} at ${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}")
-                                                }
-                                            }
-                                        )
-                                        deviceMenuItem(
-                                            label = "Take Video via ScreenCopy",
-                                            onClick = {
-                                                showDeviceMenu = false
-                                                showVideoDialog = true
-                                            }
-                                        )
+                                            )
 
-                                        Divider(
-                                            color = DropdownColors.divider,
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                                        )
-
-                                        deviceMenuItem(
-                                            label = "Restart Device",
-                                            isDanger = true,
-                                            onClick = {
-                                                coroutineScope.launch {
-                                                    AdbDevices.runCommandFromMap("$adbPath -s $selectedHardwareSource reboot")
-                                                    showDeviceMenu = false
-                                                    onCommandExecuted("Device ${getDeviceName(selectedHardwareSource)} restarted at ${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}")
+                                            deviceMenuItem(
+                                                label = if (isAirplaneModeOn) "Turn OFF Airplane Mode" else "Turn ON Airplane Mode",
+                                                statusColor = if (isAirplaneModeOn) Color(0xFFEF4444) else Color(
+                                                    0xFF22C55E
+                                                ),
+                                                onClick = {
+                                                    coroutineScope.launch {
+                                                        val action = if (isAirplaneModeOn) "disabled" else "enabled"
+                                                        val cmd =
+                                                            "$adbPath -s $selectedHardwareSource shell cmd connectivity airplane-mode ${if (isAirplaneModeOn) "disable" else "enable"}"
+                                                        AdbDevices.runCommandFromMap(cmd)
+                                                        isAirplaneModeOn = !isAirplaneModeOn
+                                                        onCommandExecuted(
+                                                            "Airplane Mode $action on ${
+                                                                deviceLabel(
+                                                                    selectedHardwareSource
+                                                                )
+                                                            } at ${
+                                                                java.time.LocalDateTime.now().format(
+                                                                    java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+                                                                )
+                                                            }"
+                                                        )
+                                                    }
                                                 }
-                                            }
-                                        )
+                                            )
+                                        }
+                                            deviceMenuItem(
+                                                label = "Open Settings",
+                                                onClick = {
+                                                    coroutineScope.launch {
+                                                        AdbDevices.runCommandFromMap("$adbPath -s $selectedHardwareSource shell am start -a android.settings.SETTINGS")
+                                                        showDeviceMenu = false
+                                                    }
+                                                }
+                                            )
+                                            deviceMenuItem(
+                                                label = "Open Network Settings",
+                                                onClick = {
+                                                    coroutineScope.launch {
+                                                        AdbDevices.runCommandFromMap("$adbPath -s $selectedHardwareSource shell am start -a android.settings.WIRELESS_SETTINGS")
+                                                        showDeviceMenu = false
+                                                    }
+                                                }
+                                            )
+                                            Divider(
+                                                color = DropdownColors.divider,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                            deviceMenuItem(
+                                                label = "Open ScreenCopy",
+                                                onClick = {
+                                                    if (!VideoRecorder.isScrcpyInstalled()) {
+                                                        showDeviceMenu = false
+                                                        showScrcpyInstallDialog = true
+                                                    } else {
+                                                        try {
+                                                            val pb = ProcessBuilder(AppConfig.scrcpyPath, "-s", selectedHardwareSource)
+                                                            val env = pb.environment()
+                                                            val adbDir = java.io.File(adbPath).parent ?: ""
+                                                            val scrcpyDir = java.io.File(AppConfig.scrcpyPath).parent ?: ""
+                                                            env["PATH"] = listOf(adbDir, scrcpyDir, "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin")
+                                                                .filter { it.isNotEmpty() }
+                                                                .joinToString(":") + ":" + (env["PATH"] ?: "")
+
+                                                            pb.redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                                                                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                                                                .start()
+
+                                                            onCommandExecuted("ScreenCopy launched on ${deviceLabel(selectedHardwareSource)} at ${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}")
+                                                        } catch (e: Exception) {
+                                                            onCommandExecuted("Couldn't launch ScreenCopy: ${e.message}")
+                                                        }
+                                                        showDeviceMenu = false
+                                                    }
+                                                }
+                                            )
+                                            deviceMenuItem(
+                                                label = "Take Screenshot",
+                                                onClick = {
+                                                    coroutineScope.launch {
+                                                        takeScreenshotToClipboard(selectedHardwareSource)
+                                                        showDeviceMenu = false
+                                                        onCommandExecuted("Screenshot captured to clipboard from ${deviceLabel(selectedHardwareSource)} at ${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}")
+                                                    }
+                                                }
+                                            )
+                                            deviceMenuItem(
+                                                label = "Take Video via ScreenCopy",
+                                                onClick = {
+                                                    showDeviceMenu = false
+                                                    showVideoDialog = true
+                                                }
+                                            )
+
+                                            Divider(
+                                                color = DropdownColors.divider,
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                                            )
+
+                                            deviceMenuItem(
+                                                label = "Restart Device",
+                                                isDanger = true,
+                                                onClick = {
+                                                    coroutineScope.launch {
+                                                        AdbDevices.runCommandFromMap("$adbPath -s $selectedHardwareSource reboot")
+                                                        showDeviceMenu = false
+                                                        onCommandExecuted("Device ${deviceLabel(selectedHardwareSource)} restarted at ${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}")
+                                                    }
+                                                }
+                                            )
                                     }
                                 }
                             }
@@ -485,10 +542,10 @@ fun deviceSourceDropDown(
         }
     }
 
-    val deviceIcon = if (selectedHardwareSource.startsWith("emulator", ignoreCase = true)) {
-        Icons.Default.Computer
-    } else {
-        Icons.Default.PhoneAndroid
+    val deviceIcon = when {
+        deviceInfoMap[selectedHardwareSource]?.deviceType == DeviceType.TV -> Icons.Default.Tv
+        selectedHardwareSource.startsWith("emulator", ignoreCase = true) -> Icons.Default.Computer
+        else -> Icons.Default.PhoneAndroid
     }
 
     LaunchedEffect(selectedHardwareSource, commandOptions) {
@@ -577,52 +634,40 @@ fun deviceSourceDropDown(
 
                             Spacer(modifier = Modifier.height(10.dp))
 
-                            deviceInfoItem(
-                                label = "Device Name",
-                                value = getDeviceName(selectedHardwareSource).ifEmpty { "Not available" },
-                                onCopy = {
-                                    val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
-                                    val selection = java.awt.datatransfer.StringSelection(getDeviceName(selectedHardwareSource))
-                                    clipboard.setContents(selection, selection)
-                                }
-                            )
+                            val info = deviceInfoMap[selectedHardwareSource]
+                            val name = deviceLabel(selectedHardwareSource)
+                            val versionText = "Version: ${info?.sdkRelease.orEmpty()} | API level: ${info?.sdk ?: 0}"
+                            val ipCopyable = deviceIp.isNotEmpty() && deviceIp != "Loading..." &&
+                                    !deviceIp.startsWith("Not") && deviceIp != "N/A"
+
+                            fun copy(text: String) {
+                                val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
+                                val selection = java.awt.datatransfer.StringSelection(text)
+                                clipboard.setContents(selection, selection)
+                            }
+
+                            deviceInfoItem(label = "Device Name", value = name, onCopy = { copy(name) })
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            deviceInfoItem(label = "Android Version", value = versionText, onCopy = { copy(versionText) })
                             Spacer(modifier = Modifier.height(10.dp))
 
                             deviceInfoItem(
-                                label = "Android Version",
-                                value = "Version: ${getAndroidSdkRelease(selectedHardwareSource)} | API level: ${getAndroidSdk(selectedHardwareSource)}",
-                                onCopy = {
-                                    val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
-                                    val selection = java.awt.datatransfer.StringSelection("Version: ${getAndroidSdkRelease(selectedHardwareSource)} | API: ${getAndroidSdk(selectedHardwareSource)}")
-                                    clipboard.setContents(selection, selection)
-                                }
+                                label = "Device Type",
+                                value = if (info?.deviceType == DeviceType.TV) "Android TV" else "Mobile"
                             )
                             Spacer(modifier = Modifier.height(10.dp))
 
-                            deviceInfoItem(
-                                label = "Device Model",
-                                value = getDeviceModel(selectedHardwareSource).ifEmpty { "Not available" },
-
-                            )
+                            deviceInfoItem(label = "Device Model", value = info?.model.orEmpty())
                             Spacer(modifier = Modifier.height(10.dp))
 
-                            deviceInfoItem(
-                                label = "Device ID",
-                                value = selectedHardwareSource,
-                            )
+                            deviceInfoItem(label = "Device ID", value = selectedHardwareSource)
                             Spacer(modifier = Modifier.height(10.dp))
 
                             deviceInfoItem(
                                 label = "IPv4 Address",
-                                value = getDeviceWifiIp(selectedHardwareSource).ifEmpty { "Not available" },
-                                onCopy = {
-                                    val ip = getDeviceWifiIp(selectedHardwareSource)
-                                    if (ip.isNotEmpty()) {
-                                        val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
-                                        val selection = java.awt.datatransfer.StringSelection(ip)
-                                        clipboard.setContents(selection, selection)
-                                    }
-                                }
+                                value = deviceIp,
+                                onCopy = { if (ipCopyable) copy(deviceIp) }
                             )
                         }
                         VerticalScrollbar(

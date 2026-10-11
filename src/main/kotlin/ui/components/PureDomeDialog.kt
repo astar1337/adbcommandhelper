@@ -6,7 +6,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Button
 import androidx.compose.material.ButtonDefaults
 import androidx.compose.material.CircularProgressIndicator
@@ -60,6 +62,7 @@ fun pureDomeMissingDialog(
                 .heightIn(max = 500.dp)
         ) {
             Column {
+                // ── Header (fixed height) ──
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -76,7 +79,10 @@ fun pureDomeMissingDialog(
                             fontFamily = AppFontFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 16.sp,
-                            color = DropdownColors.textPrimary
+                            color = DropdownColors.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
                         IconButton(
                             onClick = onDismiss,
@@ -101,7 +107,9 @@ fun pureDomeMissingDialog(
                         fontFamily = AppFontFamily,
                         fontWeight = FontWeight.Light,
                         fontSize = 12.sp,
-                        color = DropdownColors.textMuted
+                        color = DropdownColors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
 
                     Spacer(Modifier.height(12.dp))
@@ -131,22 +139,27 @@ fun pureDomeMissingDialog(
                             fontFamily = AppFontFamily,
                             fontWeight = FontWeight.Normal,
                             fontSize = 11.sp,
-                            color = Color(0xFFF59E0B)
+                            color = Color(0xFFF59E0B),
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
 
                 Divider(color = DropdownColors.divider)
 
+                // ── Body (flexible: shrinks and scrolls first) ──
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
                         .padding(horizontal = 20.dp, vertical = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     detailRow(
                         label = "Target device",
                         value = deviceLabel,
+                        maxLines = 2
                     )
                     detailRow(label = "Missing package", value = AppDetection.PUREDOME_PACKAGE)
 
@@ -167,6 +180,7 @@ fun pureDomeMissingDialog(
 
                 Divider(color = DropdownColors.divider)
 
+                // ── Footer (always visible) ──
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -256,7 +270,12 @@ fun pureDomeMissingDialog(
 }
 
 @Composable
-private fun detailRow(label: String, value: String, caption: String? = null) {
+private fun detailRow(
+    label: String,
+    value: String,
+    caption: String? = null,
+    maxLines: Int = 1
+) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             text = label,
@@ -280,7 +299,7 @@ private fun detailRow(label: String, value: String, caption: String? = null) {
                 fontWeight = FontWeight.Normal,
                 fontSize = 12.sp,
                 color = DropdownColors.textPrimary,
-                maxLines = 1,
+                maxLines = maxLines,
                 overflow = TextOverflow.Ellipsis
             )
             if (caption != null) {
@@ -317,7 +336,8 @@ private fun stepRow(number: Int, text: String) {
             fontFamily = AppFontFamily,
             fontWeight = FontWeight.Light,
             fontSize = 11.sp,
-            color = DropdownColors.textMuted
+            color = DropdownColors.textMuted,
+            modifier = Modifier.weight(1f)
         )
     }
 }

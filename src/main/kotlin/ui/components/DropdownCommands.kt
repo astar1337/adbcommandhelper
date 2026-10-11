@@ -47,7 +47,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.rotate
+import commands.getActivityPath
 import kotlinx.coroutines.Job
+import commands.appConfigs
 
 data class QuickAction(
     val label: String,
@@ -76,6 +78,7 @@ fun findCommandByAction(action: QuickAction, commands: List<Command>): Command? 
     return commands.find { it.id == action.commandId }
 }
 
+
 @Composable
 fun commandDropdown(
     commandOptions: List<Command>,
@@ -90,7 +93,7 @@ fun commandDropdown(
     selectedEnvSource: String,
     notifState: NotificationState = NotificationState.DISABLED,
     selectedEnvValue: String,
-
+    deviceType: DeviceType = DeviceType.MOBILE,
 ) {
     val scope = rememberCoroutineScope()
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
@@ -114,46 +117,45 @@ fun commandDropdown(
     var runningAutomationId by remember { mutableStateOf<String?>(null) }
     var automationJob by remember { mutableStateOf<Job?>(null) }
 
+    suspend fun runAndReport(command: Command) {
+        val result = withContext(Dispatchers.IO) { runCommandFromMap(command.adbCommand) }
+
+        val noisePrefixes = listOf(
+            "Starting:", "Warning:", "Note:", "Success",
+            "adb:", "package:", "SCRCPY launched"
+        )
+
+        val cleanResult = if (result.isSuccess) {
+            val meaningful = result.rawOutput
+                .lines()
+                .filterNot { line ->
+                    val t = line.trim()
+                    t.isEmpty() || noisePrefixes.any { t.startsWith(it) }
+                }
+                .joinToString("\n")
+                .trim()
+            if (meaningful.isEmpty()) "Command executed successfully" else "Success"
+        } else {
+            "Error: ${result.errorMessage ?: "Command failed ${Emoji.NO_DEVICE}"}"
+        }
+
+        val appVersion = withContext(Dispatchers.IO) { getAppVersion(selectedDeviceId, selectedEnvValue) }
+
+        val formattedMessage = FormatOutput(
+            device = selectedDeviceId,
+            selectedApp = selectedAppSource,
+            environment = selectedEnvSource,
+            commandLabel = command.displayLabel,
+            commandExecuted = command.adbCommand,
+            result = cleanResult,
+            appNumber = appVersion
+        ).toConsoleMessage()
+
+        onCommandExecuted(formattedMessage, null)
+    }
 
     fun executeCommand(command: Command) {
-        scope.launch {
-            val result = runCommandFromMap(command.adbCommand)
-
-            val noisePrefixes = listOf(
-                "Starting:", "Warning:", "Note:", "Success",
-                "adb:", "package:", "SCRCPY launched"
-            )
-
-            val cleanResult = if (result.isSuccess) {
-                val meaningful = result.rawOutput
-                    .lines()
-                    .filterNot { line ->
-                        val t = line.trim()
-                        t.isEmpty() || noisePrefixes.any { t.startsWith(it) }
-                    }
-                    .joinToString("\n")
-                    .trim()
-
-                if (meaningful.isEmpty())
-                    "Command executed successfully"
-                else
-                    "Success"
-            } else {
-                "Error: ${result.errorMessage ?: "Command failed ${Emoji.NO_DEVICE}"}"
-            }
-
-            val formattedMessage = FormatOutput(
-                device = selectedDeviceId,
-                selectedApp = selectedAppSource,
-                environment = selectedEnvSource,
-                commandLabel = command.displayLabel,
-                commandExecuted = command.adbCommand,
-                result = cleanResult,
-                appNumber = getAppVersion(selectedDeviceId, selectedEnvValue)
-            ).toConsoleMessage()
-
-            onCommandExecuted(formattedMessage,null)
-        }
+        scope.launch { runAndReport(command) }
     }
     fun startAutomation(optionId: String, launcher: () -> Job) {
         if (runningAutomationId != null) return
@@ -169,6 +171,16 @@ fun commandDropdown(
     val isStagingEnv = remember(selectedEnvSource) {
         selectedEnvSource.equals("STAGING", ignoreCase = true)
     }
+    val launchActivity = remember(selectedAppKey, deviceType) {
+        getActivityPath(selectedAppKey, deviceType)
+    }
+    val supportsMarcoPolo = remember(selectedAppKey) {
+        appConfigs[selectedAppKey]?.supportsMarcoPolo == true
+    }
+    val unsupportedAutomations = remember(selectedAppKey) {
+        appConfigs[selectedAppKey]?.unsupportedAutomations ?: emptySet()
+    }
+    val isTv = deviceType == DeviceType.TV
 
     marcoPoloDialog(
         showDialog = showMarcoPoloDialog,
@@ -181,8 +193,7 @@ fun commandDropdown(
                 labelParts = listOf(
                     CommandLabel.Text("Marco Polo → $regionName")
                 ),
-                adbCommand = "$adb -s $selectedDeviceId shell am start -a android.intent.action.VIEW -n $selectedEnvValue/com.dazn.splash.view.SplashScreenActivity -e DEVICE_GUID $guid"
-            )
+                adbCommand = "$adb -s $selectedDeviceId shell am start -a android.intent.action.VIEW -n $selectedEnvValue/$launchActivity -e DEVICE_GUID $guid"            )
             onCommandSelected(guidCommand)
             executeCommand(guidCommand)
         },
@@ -190,32 +201,33 @@ fun commandDropdown(
             val adb = AppConfig.adbPath
             val clearCommand = Command(
                 id = "marco_polo_clear",
-                labelParts = listOf(
-                    CommandLabel.Text("Marco Polo → Clearing data...")
-                ),
+                labelParts = listOf(CommandLabel.Text("Marco Polo → Clearing data...")),
                 adbCommand = "$adb -s $selectedDeviceId shell pm clear $selectedEnvValue"
             )
-
             val launchCommand = Command(
                 id = "marco_polo_relaunch",
-                labelParts = listOf(
-                    CommandLabel.Text("Marco Polo → Reloading app")
-                ),
-                adbCommand = "$adb -s $selectedDeviceId shell am start -n $selectedEnvValue/com.dazn.splash.view.SplashScreenActivity"
+                labelParts = listOf(CommandLabel.Text("Marco Polo → Reloading app")),
+                adbCommand = "$adb -s $selectedDeviceId shell am start -n $selectedEnvValue/$launchActivity"
             )
-            executeCommand(clearCommand)
-            executeCommand(launchCommand)
             onCommandSelected(launchCommand)
+            scope.launch {
+                runAndReport(clearCommand)   // waits for clear to finish
+                runAndReport(launchCommand)  // then relaunches
+            }
         }
     )
 
     automationDialog(
         showDialog = showAutomationDialog,
         isStaging = isStagingEnv,
+        isTv = isTv,
+        unsupportedOptionIds = unsupportedAutomations,
         runningOptionId = runningAutomationId,
         onDismiss = { showAutomationDialog = false },
         onCancelRun = { automationJob?.cancel() },
         onOptionSelected = { option ->
+            if (option.id in unsupportedAutomations) return@automationDialog
+            if ((option.mobileOnly && isTv) || (option.prodOnly && isStagingEnv)) return@automationDialog
             when (option.id) {
                 "login" -> {
                     showAutomationDialog = false
@@ -383,57 +395,80 @@ fun commandDropdown(
                     val isDeleteAction = action.commandId == "delete"
                     val isMarcoPolo = action.commandId == "marco_polo"
                     val isAutomation = action.actionType == QuickActionType.AUTOMATION
+                    val isTvBlocked = isTv && isNotifAction
+                    val isNotifBlocked = isTv && isNotifAction
+                    val isMarcoPoloBlocked = isMarcoPolo && !supportsMarcoPolo
+
                     val isAvailable = when {
                         isAutomation -> enabled
+                        isNotifBlocked || isMarcoPoloBlocked -> false
                         else -> enabled && command != null
                     }
+                    val blockedReason = when {
+                        isMarcoPoloBlocked -> "Marco Polo is only available for DAZN"
+                        isNotifBlocked -> "Not available on Android TV / Fire TV"
+                        else -> null
+                    }
+                    optionalTooltip(
+                        text = blockedReason,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        quickActionButton(
+                            label = when {
+                                isTvBlocked -> "Notifs N/A"
+                                isNotifAction -> getNotifLabel()
+                                else -> action.label
+                            },
+                            icon = action.icon,
+                            enabled = isAvailable,
+                            statusColor = if (isNotifAction && !isTvBlocked) getNotifStatusColor() else null,
+                            textColor = when {
+                                isMarcoPolo -> Color(0xFF3B82F6)
+                                isAutomation -> Color(0xFFA855F7)
+                                else -> null
+                            },
+                            onClick = {
+                                when {
+                                    isAutomation -> {
+                                        showAutomationDialog = true
+                                    }
 
-                    quickActionButton(
-                        label = if (isNotifAction) getNotifLabel() else action.label,
-                        icon = action.icon,
-                        enabled = isAvailable,
-                        statusColor = if (isNotifAction) getNotifStatusColor() else null,
-                        textColor = when {
-                            isMarcoPolo -> Color(0xFF3B82F6)
-                            isAutomation -> Color(0xFFA855F7)
-                            else -> null
-                        },
-                        onClick = {
-                            when {
-                                isAutomation -> {
-                                    showAutomationDialog = true
-                                }
-                                else -> {
-                                    command?.let {
-                                        when {
-                                            isDeleteAction -> {
-                                                pendingDeleteCommand = it
-                                                showDeleteConfirmDialog = true
-                                            }
-                                            isMarcoPolo -> {
-                                                scope.launch {
-                                                    val fetchedGuid = withContext(Dispatchers.IO) {
-                                                        getAppGUID(selectedDeviceId, selectedEnvValue)
-                                                    }
-                                                    currentDeviceGuid = fetchedGuid
-                                                    val isAlreadyRegionGuid = mpRegion.any { region -> region.guid == fetchedGuid }
-                                                    if (!isAlreadyRegionGuid) {
-                                                        storedOriginalGuid = fetchedGuid
-                                                    }
-                                                    showMarcoPoloDialog = true
+                                    else -> {
+                                        command?.let {
+                                            when {
+                                                isDeleteAction -> {
+                                                    pendingDeleteCommand = it
+                                                    showDeleteConfirmDialog = true
                                                 }
-                                            }
-                                            else -> {
-                                                onCommandSelected(it)
-                                                executeCommand(it)
+
+                                                isMarcoPolo -> {
+                                                    if (!supportsMarcoPolo) return@let
+                                                    scope.launch {
+                                                        val fetchedGuid = withContext(Dispatchers.IO) {
+                                                            getAppGUID(selectedDeviceId, selectedEnvValue)
+                                                        }
+                                                        currentDeviceGuid = fetchedGuid
+                                                        val isAlreadyRegionGuid =
+                                                            mpRegion.any { region -> region.guid == fetchedGuid }
+                                                        if (!isAlreadyRegionGuid) {
+                                                            storedOriginalGuid = fetchedGuid
+                                                        }
+                                                        showMarcoPoloDialog = true
+                                                    }
+                                                }
+
+                                                else -> {
+                                                    onCommandSelected(it)
+                                                    executeCommand(it)
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
-                        },
-                        modifier = Modifier.weight(1f)
-                    )
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
                 if (showDeleteConfirmDialog && pendingDeleteCommand != null) {
                     Dialog(onDismissRequest = {
@@ -600,6 +635,39 @@ fun commandDropdown(
         }
     }
 }
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun optionalTooltip(
+    text: String?,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit
+) {
+    if (text == null) {
+        Box(modifier) { content() }
+        return
+    }
+    TooltipArea(
+        tooltip = {
+            Surface(
+                color = Color(0xFF1A1A1A),
+                shape = RoundedCornerShape(6.dp),
+                elevation = 4.dp
+            ) {
+                Text(
+                    text,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    fontFamily = AppFontFamily,
+                    fontSize = 12.sp,
+                    color = Color.White
+                )
+            }
+        },
+        delayMillis = 400,
+        modifier = modifier
+    ) {
+        content()
+    }
+}
 
 @Composable
 private fun quickActionButton(
@@ -675,7 +743,8 @@ data class AutomationOption(
     val id: String,
     val flowFile: String? = null,
     val prodOnly: Boolean = false,
-    val usesMaestro: Boolean = true
+    val usesMaestro: Boolean = true,
+    val mobileOnly: Boolean = false
 
 )
 private val automationOptions = listOf(
@@ -684,15 +753,16 @@ private val automationOptions = listOf(
         icon = Icons.Default.Login,
         description = "Log in to the app with your credentials",
         id = "login",
-        prodOnly = true
-
+        prodOnly = true,
+        mobileOnly = true
     ),
     AutomationOption(
         label = "Log Out",
         icon = Icons.Default.Logout,
         description = "Log out of the app",
         id = "logout",
-        prodOnly = true
+        prodOnly = true,
+        mobileOnly = true
     ),
     AutomationOption(
         label = "Clear STAG Phone number",
@@ -707,14 +777,14 @@ private val automationOptions = listOf(
         description = "Clear phone number from a production account",
         id = "clear_prod_phone",
         usesMaestro = false
-
     ),
     AutomationOption(
         label = "Sign-up FREEMIUM",
         icon = Icons.Default.PersonAdd,
         description = "Create a new freemium account",
         id = "signup_freemium",
-        prodOnly = true
+        prodOnly = true,
+        mobileOnly = true
     ),
 )
 
@@ -722,10 +792,12 @@ private val automationOptions = listOf(
 fun automationDialog(
     showDialog: Boolean,
     isStaging: Boolean = false,
+    isTv: Boolean = false,
     runningOptionId: String? = null,
     onDismiss: () -> Unit,
     onCancelRun: () -> Unit,
-    onOptionSelected: (AutomationOption) -> Unit
+    onOptionSelected: (AutomationOption) -> Unit,
+    unsupportedOptionIds: Set<String> = emptySet()
 ) {
     if (!showDialog) return
 
@@ -738,6 +810,7 @@ fun automationDialog(
             repeatMode = RepeatMode.Restart
         )
     )
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(12.dp),
@@ -746,6 +819,7 @@ fun automationDialog(
             modifier = Modifier.width(420.dp)
         ) {
             Column {
+                // Header
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -773,10 +847,7 @@ fun automationDialog(
                                 color = DropdownColors.textPrimary
                             )
                         }
-                        IconButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.size(24.dp)
-                        ) {
+                        IconButton(onClick = onDismiss, modifier = Modifier.size(24.dp)) {
                             Icon(
                                 imageVector = Icons.Default.Close,
                                 contentDescription = "Close",
@@ -789,22 +860,20 @@ fun automationDialog(
                     Text(
                         text = when {
                             runningOptionId != null -> "Flow running — press ✕ to cancel"
+                            isTv -> "UI test flows are not available on Android TV / Fire TV"
                             isStaging -> "UI test flows are restricted to production builds"
                             else -> "Select an automation to run"
                         },
                         fontFamily = AppFontFamily,
                         fontWeight = FontWeight.Light,
                         fontSize = 12.sp,
-                        color = when {
-                            runningOptionId != null -> DropdownColors.orange
-                            isStaging -> DropdownColors.textMuted
-                            else -> DropdownColors.textMuted
-                        }
+                        color = if (runningOptionId != null) DropdownColors.orange else DropdownColors.textMuted
                     )
                 }
 
                 Divider(color = DropdownColors.divider)
 
+                // Options
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -812,121 +881,100 @@ fun automationDialog(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     automationOptions.forEach { option ->
-                        val interaction = remember { MutableInteractionSource() }
-                        val isHovered by interaction.collectIsHoveredAsState()
+                        key(option.id) {
+                            val interaction = remember { MutableInteractionSource() }
+                            val isHovered by interaction.collectIsHoveredAsState()
 
-                        val isRunning = runningOptionId == option.id
-                        val isEnvBlocked = option.prodOnly && isStaging
-                        val isLocked = isEnvBlocked ||
-                                (option.usesMaestro && runningOptionId != null && !isRunning)
-                        val isInteractive = !isLocked && !isRunning
+                            val isBrandBlocked = option.id in unsupportedOptionIds
+                            val isRunning = runningOptionId == option.id
+                            val isPlatformBlocked = option.mobileOnly && isTv
+                            val isEnvBlocked = option.prodOnly && isStaging
+                            val isBusyLocked = option.usesMaestro && runningOptionId != null && !isRunning
 
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .alpha(if (isLocked) 0.4f else 1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(
-                                    if (isHovered && isInteractive) DropdownColors.rowHover
-                                    else Color.Transparent
-                                )
-                                .hoverable(interaction, enabled = isInteractive)
-                                .clickable(enabled = isInteractive) { onOptionSelected(option) }
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
+                            val isLocked = isBrandBlocked || isPlatformBlocked || isEnvBlocked || isBusyLocked
+                            val isInteractive = !isLocked && !isRunning
+                            val showHover = isHovered && isInteractive
+
                             Row(
-                                modifier = Modifier.weight(1f),
-                                verticalAlignment = Alignment.CenterVertically
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .alpha(if (isLocked) 0.4f else 1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (showHover) DropdownColors.rowHover else Color.Transparent)
+                                    .hoverable(interaction, enabled = isInteractive)
+                                    .clickable(enabled = isInteractive) { onOptionSelected(option) }
+                                    .padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Icon(
-                                    imageVector = option.icon,
-                                    contentDescription = null,
-                                    tint = if (isHovered && isInteractive) Color(0xFFA855F7)
-                                    else DropdownColors.textMuted,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        text = option.label,
-                                        fontFamily = AppFontFamily,
-                                        fontWeight = FontWeight.Medium,
-                                        fontSize = 13.sp,
-                                        color = if (isHovered && isInteractive) DropdownColors.textPrimary
-                                        else DropdownColors.textSecondary
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = option.icon,
+                                        contentDescription = null,
+                                        tint = if (showHover) Color(0xFFA855F7) else DropdownColors.textMuted,
+                                        modifier = Modifier.size(18.dp)
                                     )
-                                    Text(
-                                        text = when {
-                                            isRunning -> "Running…"
-                                            isEnvBlocked -> "Not available in the staging environment"
-                                            else -> option.description
-                                        },
-                                        fontFamily = AppFontFamily,
-                                        fontWeight = FontWeight.Light,
-                                        fontSize = 11.sp,
-                                        color = if (isRunning) DropdownColors.orange
-                                        else DropdownColors.textMuted
-                                    )
-                                }
-                            }
-
-                            when {
-                                isEnvBlocked -> {
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(DropdownColors.textMuted.copy(alpha = 0.15f))
-                                            .border(
-                                                1.dp,
-                                                DropdownColors.textMuted.copy(alpha = 0.3f),
-                                                RoundedCornerShape(4.dp)
-                                            )
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                    ) {
+                                    Spacer(Modifier.width(12.dp))
+                                    Column {
                                         Text(
-                                            text = "PROD ONLY",
+                                            text = option.label,
                                             fontFamily = AppFontFamily,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 8.sp,
-                                            color = DropdownColors.textMuted,
-                                            letterSpacing = 0.5.sp
+                                            fontWeight = FontWeight.Medium,
+                                            fontSize = 13.sp,
+                                            color = if (showHover) DropdownColors.textPrimary else DropdownColors.textSecondary
+                                        )
+                                        Text(
+                                            text = when {
+                                                isRunning -> "Running…"
+                                                isPlatformBlocked -> "Not available on Android TV / Fire TV"
+                                                isBrandBlocked -> "Not available for this app at this time"
+                                                isEnvBlocked -> "Not available in the staging environment"
+                                                else -> option.description
+                                            },
+                                            fontFamily = AppFontFamily,
+                                            fontWeight = FontWeight.Light,
+                                            fontSize = 11.sp,
+                                            color = if (isRunning) DropdownColors.orange else DropdownColors.textMuted
                                         )
                                     }
                                 }
 
-                                isRunning -> {
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Box(modifier = Modifier.size(20.dp)) {
-                                            CircularProgressIndicator(
-                                                progress = 0.7f,
-                                                color = DropdownColors.orange,
-                                                strokeWidth = 2.dp,
-                                                modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .rotate(spinnerRotation)
-                                            )
-                                        }
-
-                                        val cancelInteraction = remember { MutableInteractionSource() }
-                                        val isCancelHovered by cancelInteraction.collectIsHoveredAsState()
-
-                                        IconButton(
-                                            onClick = onCancelRun,
-                                            interactionSource = cancelInteraction,
-                                            modifier = Modifier.size(20.dp)
+                                when {
+                                    isPlatformBlocked -> blockedBadge("MOBILE ONLY")
+                                    isBrandBlocked -> blockedBadge("BLOCKED AT THIS TIME")
+                                    isEnvBlocked -> blockedBadge("PROD ONLY")
+                                    isRunning -> {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Close,
-                                                contentDescription = "Cancel run",
-                                                tint = if (isCancelHovered) DropdownColors.required
-                                                else DropdownColors.textMuted,
-                                                modifier = Modifier.size(14.dp)
-                                            )
+                                            Box(modifier = Modifier.size(20.dp)) {
+                                                CircularProgressIndicator(
+                                                    progress = 0.7f,
+                                                    color = DropdownColors.orange,
+                                                    strokeWidth = 2.dp,
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .rotate(spinnerRotation)
+                                                )
+                                            }
+                                            val cancelInteraction = remember { MutableInteractionSource() }
+                                            val isCancelHovered by cancelInteraction.collectIsHoveredAsState()
+                                            IconButton(
+                                                onClick = onCancelRun,
+                                                interactionSource = cancelInteraction,
+                                                modifier = Modifier.size(20.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Cancel run",
+                                                    tint = if (isCancelHovered) DropdownColors.required else DropdownColors.textMuted,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -936,5 +984,25 @@ fun automationDialog(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun blockedBadge(text: String) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(DropdownColors.textMuted.copy(alpha = 0.15f))
+            .border(1.dp, DropdownColors.textMuted.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Text(
+            text = text,
+            fontFamily = AppFontFamily,
+            fontWeight = FontWeight.Bold,
+            fontSize = 8.sp,
+            color = DropdownColors.textMuted,
+            letterSpacing = 0.5.sp
+        )
     }
 }

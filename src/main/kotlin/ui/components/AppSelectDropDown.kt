@@ -5,6 +5,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
@@ -30,11 +31,28 @@ import androidx.compose.ui.window.Dialog
 import commands.Emoji
 import commands.Emoji.PACKAGE_EMOJI
 import commands.appConfigs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import ui.components.theme.AppFontFamily
-import utils.helpers.*
-import ui.components.theme.gradientColorsIcons
 import ui.components.theme.DropdownColors
-import androidx.compose.foundation.shape.CircleShape
+import ui.components.theme.gradientColorsIcons
+import utils.helpers.*
+
+private data class AppInfo(
+    val guid: String = "",
+    val version: String = "",
+    val installTime: String = "",
+    val size: String = ""
+)
+
+private const val LOADING_TEXT = "Loading..."
+
+private fun copyToClipboard(text: String) {
+    if (text.isBlank() || text == LOADING_TEXT) return
+    val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
+    val selection = java.awt.datatransfer.StringSelection(text)
+    clipboard.setContents(selection, selection)
+}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -45,34 +63,48 @@ fun appSelectDropDown(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     selectedHardwareSource: String,
-    selectedEnvSource: String,
+    selectedEnvSource: String = "",
     hasSelectedDevice: Boolean = false,
     selectedAppKey: String = "",
     hasSelectedApp: Boolean = false,
-    hasSelectedEnv: Boolean = false
+    hasSelectedEnv: Boolean = false,
+    selectedPackage: String = "",
 ) {
-    fun getPackageName(): String {
-        val appKey = selectedAppKey.ifEmpty {
-            when {
-                selectedAppSource.startsWith("KAYO") -> "KAYO"
-                selectedAppSource.startsWith("BINGE") -> "BINGE"
-                selectedAppSource.startsWith("DAZN") -> "DAZN"
-                else -> ""
-            }
-        }
-        if (appKey.isEmpty()) return ""
-        val config = appConfigs[appKey] ?: return ""
-        return when {
-            selectedEnvSource.contains("PROD", ignoreCase = true) -> config.prodPackage
-            selectedEnvSource.contains("STAG", ignoreCase = true) -> config.stagPackage
-            else -> ""
-        }
-    }
-
     var dropdownWidth by remember { mutableStateOf(0.dp) }
     val density = LocalDensity.current
     var isExpanded by remember { mutableStateOf(false) }
-    var showDeviceInfoDialog by remember { mutableStateOf(false) }
+    var showAppInfoDialog by remember { mutableStateOf(false) }
+
+    var appInfo by remember { mutableStateOf<AppInfo?>(null) }
+
+    // Load app details once per open (and again if device/package changes while open)
+    LaunchedEffect(showAppInfoDialog, selectedHardwareSource, selectedPackage) {
+        if (!showAppInfoDialog || selectedPackage.isEmpty()) return@LaunchedEffect
+        appInfo = null
+        appInfo = withContext(Dispatchers.IO) {
+            try {
+                AppInfo(
+                    guid = getAppGUID(selectedHardwareSource, selectedPackage),
+                    version = getAppVersion(selectedHardwareSource, selectedPackage),
+                    installTime = getAppInstallTime(selectedHardwareSource, selectedPackage),
+                    size = getAppSizes(selectedHardwareSource, selectedPackage)
+                )
+            } catch (e: Exception) {
+                println("Failed to load app info: ${e.message}")
+                AppInfo()
+            }
+        }
+    }
+
+    // Close the dialog if the selected app is no longer installed or the device is gone
+    LaunchedEffect(selectedHardwareSource, selectedAppKey, commandOptions) {
+        if (showAppInfoDialog) {
+            val stillValid = selectedAppKey in commandOptions &&
+                    selectedHardwareSource.isNotEmpty() &&
+                    !selectedHardwareSource.startsWith("Select", ignoreCase = true)
+            if (!stillValid) showAppInfoDialog = false
+        }
+    }
 
     Card(
         modifier = modifier,
@@ -89,7 +121,6 @@ fun appSelectDropDown(
                     .fillMaxWidth()
                     .padding(bottom = 10.dp)
             ) {
-                
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = Icons.Default.Apps,
@@ -158,14 +189,13 @@ fun appSelectDropDown(
                         ) {
                             appHeaderIconButton(
                                 icon = Icons.Default.Quiz,
-                                onClick = { showDeviceInfoDialog = true }
+                                onClick = { showAppInfoDialog = true }
                             )
                         }
                     }
                 }
-
-
             }
+
             Box {
                 val triggerInteraction = remember { MutableInteractionSource() }
                 val isTriggerHovered by triggerInteraction.collectIsHoveredAsState()
@@ -238,24 +268,26 @@ fun appSelectDropDown(
                             }
                         } else {
                             commandOptions.forEach { (key, _) ->
-                                val itemInteraction = remember { MutableInteractionSource() }
-                                val itemHovered by itemInteraction.collectIsHoveredAsState()
+                                key(key) {
+                                    val itemInteraction = remember { MutableInteractionSource() }
+                                    val itemHovered by itemInteraction.collectIsHoveredAsState()
 
-                                DropdownMenuItem(
-                                    onClick = {
-                                        onCommandSelected(key)
-                                        isExpanded = false
-                                    },
-                                    interactionSource = itemInteraction,
-                                    modifier = Modifier
-                                        .background(
-                                            if (itemHovered) DropdownColors.rowHover else Color.Transparent
+                                    DropdownMenuItem(
+                                        onClick = {
+                                            onCommandSelected(key)
+                                            isExpanded = false
+                                        },
+                                        interactionSource = itemInteraction,
+                                        modifier = Modifier
+                                            .background(
+                                                if (itemHovered) DropdownColors.rowHover else Color.Transparent
+                                            )
+                                    ) {
+                                        appInlineLabel(
+                                            appKey = key,
+                                            textColor = DropdownColors.textPrimary
                                         )
-                                ) {
-                                    appInlineLabel(
-                                        appKey = key,
-                                        textColor = DropdownColors.textPrimary
-                                    )
+                                    }
                                 }
                             }
                         }
@@ -265,18 +297,8 @@ fun appSelectDropDown(
         }
     }
 
-    LaunchedEffect(selectedHardwareSource, commandOptions) {
-        if (showDeviceInfoDialog) {
-            val isDeviceAvailable = commandOptions.contains(selectedHardwareSource) &&
-                    !selectedHardwareSource.startsWith("Select", ignoreCase = true)
-            if (!isDeviceAvailable) {
-                showDeviceInfoDialog = false
-            }
-        }
-    }
-
-    if (showDeviceInfoDialog) {
-        Dialog(onDismissRequest = { showDeviceInfoDialog = false }) {
+    if (showAppInfoDialog) {
+        Dialog(onDismissRequest = { showAppInfoDialog = false }) {
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = DropdownColors.cardBg,
@@ -302,10 +324,13 @@ fun appSelectDropDown(
                                 fontFamily = AppFontFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 16.sp,
-                                color = DropdownColors.textPrimary
+                                color = DropdownColors.textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
                             )
                             IconButton(
-                                onClick = { showDeviceInfoDialog = false },
+                                onClick = { showAppInfoDialog = false },
                                 modifier = Modifier.size(24.dp)
                             ) {
                                 Icon(
@@ -322,7 +347,9 @@ fun appSelectDropDown(
                             fontFamily = AppFontFamily,
                             fontWeight = FontWeight.Light,
                             fontSize = 12.sp,
-                            color = DropdownColors.textMuted
+                            color = DropdownColors.textMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
 
@@ -334,6 +361,7 @@ fun appSelectDropDown(
                             .weight(1f)
                     ) {
                         val scrollState = rememberScrollState()
+                        val info = appInfo
 
                         Column(
                             modifier = Modifier
@@ -346,14 +374,13 @@ fun appSelectDropDown(
                                 modifier = Modifier.size(60.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (selectedAppKey.isNotEmpty()) {
-                                    appConfigs[selectedAppKey]?.iconRes?.let { iconRes ->
-                                        Image(
-                                            painter = painterResource(iconRes),
-                                            contentDescription = selectedAppSource,
-                                            modifier = Modifier.size(60.dp)
-                                        )
-                                    }
+                                val iconRes = appConfigs[selectedAppKey]?.iconRes
+                                if (iconRes != null) {
+                                    Image(
+                                        painter = painterResource(iconRes),
+                                        contentDescription = selectedAppSource,
+                                        modifier = Modifier.size(60.dp)
+                                    )
                                 } else {
                                     Text(
                                         text = Emoji.NO_DEVICE,
@@ -364,41 +391,43 @@ fun appSelectDropDown(
 
                             Spacer(modifier = Modifier.height(14.dp))
 
+                            if (selectedEnvSource.isNotBlank() && !selectedEnvSource.startsWith("Select", ignoreCase = true)) {
+                                styledAppInfoItem(
+                                    label = "Environment",
+                                    value = selectedEnvSource
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                            }
+
                             styledAppInfoItem(
                                 label = "Package Name",
-                                value = getPackageName(),
-                                onCopy = {
-                                    val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
-                                    val selection = java.awt.datatransfer.StringSelection(getDeviceName(selectedHardwareSource))
-                                    clipboard.setContents(selection, selection)
-                                }
+                                value = selectedPackage,
+                                onCopy = { copyToClipboard(selectedPackage) }
                             )
+                            Spacer(modifier = Modifier.height(10.dp))
+
                             styledAppInfoItem(
                                 label = "Device GUID",
-                                value = getAppGUID(selectedHardwareSource,getPackageName()),
-                                onCopy = {
-                                    val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
-                                    val selection = java.awt.datatransfer.StringSelection(getDeviceName(selectedHardwareSource))
-                                    clipboard.setContents(selection, selection)
-                                }
+                                value = info?.guid ?: LOADING_TEXT,
+                                onCopy = { info?.guid?.let { copyToClipboard(it) } }
                             )
                             Spacer(modifier = Modifier.height(10.dp))
 
                             styledAppInfoItem(
                                 label = "Version and Version Code",
-                                value = getAppVersion(selectedHardwareSource, getPackageName())
+                                value = info?.version ?: LOADING_TEXT
                             )
                             Spacer(modifier = Modifier.height(10.dp))
 
                             styledAppInfoItem(
                                 label = "First Install Time",
-                                value = getAppInstallTime(selectedHardwareSource, getPackageName())
+                                value = info?.installTime ?: LOADING_TEXT
                             )
                             Spacer(modifier = Modifier.height(10.dp))
 
                             styledAppInfoItem(
                                 label = "Application Size (Approx.)",
-                                value = getAppSizes(selectedHardwareSource, getPackageName())
+                                value = info?.size ?: LOADING_TEXT
                             )
                         }
 

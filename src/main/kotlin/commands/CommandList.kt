@@ -21,8 +21,44 @@ data class AppDefinition(
     val prodPackage: String,
     val stagPackage: String,
     val activityPath: String,
-    val iconRes: String
-)
+    val tvProdPackage: String? = null,
+    val tvStagPackage: String? = null,
+    val tvActivityPath: String? = null,
+    val fireTvProdPackage: String? = null,
+    val fireTvStagPackage: String? = null,
+    val fireTvActivityPath: String? = null,
+    val iconRes: String,
+    val betaPackage: String? = null,
+    val supportsMarcoPolo: Boolean = false,
+    val unsupportedAutomations: Set<String> = emptySet()
+) {
+
+    fun prodCandidates(type: DeviceType?): List<String> =
+        ordered(type, prodPackage, tvProdPackage, fireTvProdPackage)
+
+    fun stagCandidates(type: DeviceType?): List<String> =
+        ordered(type, stagPackage, tvStagPackage, fireTvStagPackage)
+
+    fun betaCandidates(): List<String> = listOfNotNull(betaPackage)
+
+    private fun ordered(type: DeviceType?, mobile: String, tv: String?, fire: String?): List<String> =
+        (if (type == DeviceType.TV) listOfNotNull(tv, fire, mobile) else listOfNotNull(mobile, tv, fire)).distinct()
+
+    val allProdPackages: List<String> get() = listOfNotNull(prodPackage, tvProdPackage, fireTvProdPackage).distinct()
+    val allStagPackages: List<String> get() = listOfNotNull(stagPackage, tvStagPackage, fireTvStagPackage).distinct()
+    val allBetaPackages: List<String> get() = listOfNotNull(betaPackage)
+    val allPackages: List<String> get() = (allProdPackages + allStagPackages + allBetaPackages).distinct()
+
+    fun activityFor(packageName: String, type: DeviceType?): String = when {
+        packageName == fireTvProdPackage || packageName == fireTvStagPackage ->
+            fireTvActivityPath ?: tvActivityPath ?: activityPath
+        packageName == tvProdPackage || packageName == tvStagPackage ->
+            tvActivityPath ?: activityPath
+        // Shared packages (com.dazn, com.dazn.stag, com.dazn.beta): decide by device type
+        type == DeviceType.TV -> tvActivityPath ?: activityPath
+        else -> activityPath
+    }
+}
 
 val appConfigs = mapOf(
     "KAYO" to AppDefinition(
@@ -30,23 +66,46 @@ val appConfigs = mapOf(
         prodPackage = "au.com.kayosports",
         stagPackage = "au.com.kayosports.debug",
         activityPath = "com.dazn.splash.view.SplashScreenActivity",
-        iconRes = "icons/kayoico.png"
+        tvProdPackage = "au.com.kayosports.tv",
+        tvStagPackage = "au.com.kayosports.tv.stag",
+        tvActivityPath = "com.dazn.MainActivity",
+        iconRes = "icons/kayoico.png",
+        fireTvProdPackage = "au.com.streamotion.ctv.kayo",
+        fireTvStagPackage = "au.com.streamotion.ctv.kayo.stag",
+        unsupportedAutomations = setOf("signup_freemium"),
     ),
     "BINGE" to AppDefinition(
         displayName = "BINGE",
         prodPackage = "au.com.streamotion.ares",
         stagPackage = "au.com.streamotion.ares.debug",
         activityPath = "com.dazn.splash.view.SplashScreenActivity",
-        iconRes = "icons/bingeico.png"
+        tvProdPackage = "au.com.streamotion.ares.tv",
+        tvStagPackage = "au.com.streamotion.ares.tv.stag",
+        tvActivityPath = "com.dazn.MainActivity",
+        iconRes = "icons/bingeico.png",
+        fireTvProdPackage = "au.com.streamotion.ctv.binge",
+        fireTvStagPackage = "au.com.streamotion.ctv.binge.stag",
+        unsupportedAutomations = setOf("signup_freemium")
     ),
     "DAZN" to AppDefinition(
         displayName = "DAZN",
         prodPackage = "com.dazn",
         stagPackage = "com.dazn.stag",
+        betaPackage = "com.dazn.beta",
         activityPath = "com.dazn.splash.view.SplashScreenActivity",
-        iconRes = "icons/daznlogo.jpg"
+        tvActivityPath = "com.dazn.MainActivity",
+        iconRes = "icons/daznlogo.jpg",
+        supportsMarcoPolo = true
     )
 )
+fun getActivityPath(appKey: String, deviceType: DeviceType = DeviceType.MOBILE): String {
+    if (appKey.isEmpty()) return ""
+    val config = appConfigs[appKey] ?: error("Unknown app: $appKey")
+    return when (deviceType) {
+        DeviceType.TV -> config.tvActivityPath ?: config.activityPath
+        DeviceType.MOBILE -> config.activityPath
+    }
+}
 
 val appList = appConfigs.mapValues { it.value.displayName }
 
@@ -297,6 +356,7 @@ object Emoji {
     const val CLEAN_SOAP = "\uD83E\uDDFC"
     const val CLEAN_SPONGE = "\uD83E\uDDFD"
     const val PACKAGE_EMOJI = "\uD83D\uDCE6"
+    const val TV = "\uD83D\uDCFA"
 
     data class OutPutResultsFormatted(
         val deviceChosen: List<AdbDeviceId>,
@@ -322,13 +382,14 @@ fun commandOptions(
     envPrefix: String,
     notifState: NotificationState,
     envName: String,
+    sdk: Int,
     appKey: String,
+    deviceType: DeviceType,
 ): List<Command> {
     if (appKey.isEmpty()) return emptyList()
 
     val adb = AppConfig.adbPath
-    val sdk = getAndroidSdk(deviceId)
-    val activityPath = getActivityPath(appKey)
+    val activityPath = getActivityPath(appKey, deviceType)
     val commands = mutableListOf<Command>()
 
     commands += Command(
