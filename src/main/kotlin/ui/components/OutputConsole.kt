@@ -279,7 +279,10 @@ fun outputConsole(
                                             message.content.lines()
                                                 .filter { it.isNotBlank() }
                                                 .forEach { line ->
-                                                    RenderStyledLine(stripToolPaths(line))
+                                                    RenderStyledLine(
+                                                        line = stripToolPaths(line),
+                                                        rawCommand = message.rawCommand?.let { stripToolPaths(it) }
+                                                    )
                                                 }
                                         }
                                         is ConsoleInstallMessage.InstallAction -> {
@@ -335,7 +338,7 @@ fun outputConsole(
 }
 
 @Composable
-private fun RenderStyledLine(line: String) {
+private fun RenderStyledLine(line: String, rawCommand: String? = null) {
     if (line.startsWith("File:") && line.contains("/")) {
         val filePath = line.substringAfter("File:").trim()
         val fileInteraction = remember { MutableInteractionSource() }
@@ -400,10 +403,11 @@ private fun RenderStyledLine(line: String) {
                     .size(14.dp)
                     .hoverable(copyInteraction)
                     .clickable {
-                        val command = line
-                            .substringAfter("ADB Command:")
-                            .substringAfter("ADB:")
-                            .trim()
+                        val command = rawCommand ?: when {
+                            line.startsWith("ADB Command:") -> line.removePrefix("ADB Command:")
+                            line.startsWith("ADB:") -> line.removePrefix("ADB:")
+                            else -> line
+                        }.trim()
                         val clipboard = java.awt.Toolkit.getDefaultToolkit().systemClipboard
                         val selection = java.awt.datatransfer.StringSelection(command)
                         clipboard.setContents(selection, selection)

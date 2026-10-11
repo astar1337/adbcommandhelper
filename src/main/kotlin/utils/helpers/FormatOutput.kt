@@ -59,6 +59,9 @@ data class FormatOutput(
             appendLine(actionMessage)
             appendLine("ADB Command: $truncatedCommand")
         }
-        return ConsoleInstallMessage.Text(formattedString)
+        return ConsoleInstallMessage.Text(
+            content = formattedString,
+            rawCommand = commandExecuted
+        )
     }
 }
