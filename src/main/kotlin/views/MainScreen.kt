@@ -299,9 +299,9 @@ fun mainScreen() {
     LaunchedEffect(refreshTrigger) {
         while (true) {
             delay(1000)
-            val newDevices = withContext(Dispatchers.IO) {
-                AdbDevices.getDevicesList()
-            }
+            val raw = withContext(Dispatchers.IO) { AdbDevices.getDevicesList() }
+            AdbConnectionManager.syncWith(raw)
+            val newDevices = AdbConnectionManager.visibleDevices(raw)
             devicesList = newDevices
             val currentCount = newDevices.size
 
@@ -392,6 +392,9 @@ fun mainScreen() {
         consoleMessages.isEmpty() -> "Awaiting output from console..."
         else -> ""
     }
+
+    val hasAnyDevice = devicesList.isNotEmpty() || AdbConnectionManager.disconnected.isNotEmpty()
+
     LaunchedEffect(showClearMessage) {
         if (showClearMessage) {
             delay(2000)
@@ -625,7 +628,7 @@ fun mainScreen() {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Crossfade(
-                    targetState = devicesList.isNotEmpty(),
+                    targetState = hasAnyDevice,
                     animationSpec = tween(200),
                     modifier = Modifier.weight(1f),
                 ) { deviceConnected ->
@@ -640,7 +643,7 @@ fun mainScreen() {
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Crossfade(
-                                    targetState = devicesList.isNotEmpty(),
+                                    targetState = hasAnyDevice,
                                     animationSpec = tween(200),
                                     modifier = Modifier.weight(1f)
                                 ) { hasDevices ->
@@ -701,12 +704,14 @@ fun mainScreen() {
                                             onCommandSelected = { appKey ->
                                                 val app = installedApps.find { it.key == appKey }
                                                 if (app != null) {
+                                                    val envList = buildEnvList(app)
                                                     selectedAppKey = appKey
                                                     selectedAppSource = app.displayName
                                                     selectedAppValue = appKey.lowercase()
                                                     hasSelectedApp = true
-                                                    if (currentEnvList.size == 1) {
-                                                        val envEntry = currentEnvList.entries.first()
+                                                    currentEnvList = envList
+                                                    if (envList.size == 1) {
+                                                        val envEntry = envList.entries.first()
                                                         selectedEnvSource = envEntry.key
                                                         selectedEnvValue = envEntry.value
                                                         hasSelectedEnv = true
@@ -863,8 +868,8 @@ fun mainScreen() {
                 Spacer(modifier = Modifier.height(8.dp))
                 appFooter(
                     modifier = Modifier.height(18.dp),
-                    version = "2.0.4",
-                    githubUrl = "www.github.com"
+                    version = "3.0.1",
+                    githubUrl = "https://github.com/astar1337/adbcommandhelper"
                 )
 
             }

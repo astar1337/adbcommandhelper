@@ -48,7 +48,12 @@ import utils.helpers.AppConfig.adbPath
 import commands.Emoji.TV
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.material.icons.filled.LinkOff
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.rotate
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -82,6 +87,9 @@ fun deviceSourceDropDown(
 
     val isSelectedTv = deviceInfoMap[selectedHardwareSource]?.deviceType == DeviceType.TV
 
+    var actionSerial by remember { mutableStateOf<String?>(null) }
+    var action by remember { mutableStateOf(ConnectionAction.NONE) }
+
     LaunchedEffect(commandOptions) {
         // drop devices that are no longer connected
         deviceInfoMap.keys.retainAll(commandOptions.toSet())
@@ -100,6 +108,18 @@ fun deviceSourceDropDown(
             deviceIp = withContext(Dispatchers.IO) { getDeviceWifiIp(selectedHardwareSource) }
         }
     }
+    val disconnectedDevices = AdbConnectionManager.disconnected
+        .filterNot { it.serial in commandOptions }
+
+    fun snapshotOf(serial: String): DisconnectedDevice {
+        val info = deviceInfoMap[serial]
+        return DisconnectedDevice(
+            serial = serial,
+            label = info?.name?.ifBlank { null } ?: serial,
+            sdkRelease = info?.sdkRelease.orEmpty(),
+            deviceType = info?.deviceType ?: DeviceType.MOBILE
+        )
+    }
 
 
     fun deviceLabel(deviceId: String): String =
@@ -109,14 +129,14 @@ fun deviceSourceDropDown(
         if (deviceId.startsWith("Select", ignoreCase = true)) return deviceId
         if (deviceId.contains("No devices", ignoreCase = true)) return deviceId
 
-        val info = deviceInfoMap[deviceId] ?: return deviceId   // still loading
+        val info = deviceInfoMap[deviceId] ?: return deviceId
 
         val emoji = when {
-            info.deviceType == DeviceType.TV -> TV                     // TV first, so Android TV emulators show 📺
+            info.deviceType == DeviceType.TV -> TV
             deviceId.startsWith("emulator", ignoreCase = true) -> EMULATOR_COMPUTER
             else -> PHONE_MOBILE
         }
-        return "(${info.sdkRelease}) $emoji ${deviceLabel(deviceId)}"
+        return "(AND ${info.sdkRelease}) $emoji ${deviceLabel(deviceId)}"
     }
 
     val displayText = when {
@@ -341,21 +361,25 @@ fun deviceSourceDropDown(
                                                     }
                                                 }
                                             )
+                                            deviceMenuItem(
+                                                label = "Open Network Settings",
+                                                onClick = {
+                                                    coroutineScope.launch {
+                                                        withContext(Dispatchers.IO) {
+                                                            AdbDevices.runCommandFromMap("$adbPath -s $selectedHardwareSource shell am start -a android.settings.WIRELESS_SETTINGS")
+                                                        }
+                                                        showDeviceMenu = false
+                                                    }
+                                                }
+                                            )
                                         }
                                             deviceMenuItem(
                                                 label = "Open Settings",
                                                 onClick = {
                                                     coroutineScope.launch {
-                                                        AdbDevices.runCommandFromMap("$adbPath -s $selectedHardwareSource shell am start -a android.settings.SETTINGS")
-                                                        showDeviceMenu = false
-                                                    }
-                                                }
-                                            )
-                                            deviceMenuItem(
-                                                label = "Open Network Settings",
-                                                onClick = {
-                                                    coroutineScope.launch {
-                                                        AdbDevices.runCommandFromMap("$adbPath -s $selectedHardwareSource shell am start -a android.settings.WIRELESS_SETTINGS")
+                                                        withContext(Dispatchers.IO) {
+                                                            AdbDevices.runCommandFromMap("$adbPath -s $selectedHardwareSource shell am start -a android.settings.SETTINGS")
+                                                        }
                                                         showDeviceMenu = false
                                                     }
                                                 }
@@ -367,28 +391,53 @@ fun deviceSourceDropDown(
                                             deviceMenuItem(
                                                 label = "Open ScreenCopy",
                                                 onClick = {
-                                                    if (!VideoRecorder.isScrcpyInstalled()) {
-                                                        showDeviceMenu = false
-                                                        showScrcpyInstallDialog = true
-                                                    } else {
-                                                        try {
-                                                            val pb = ProcessBuilder(AppConfig.scrcpyPath, "-s", selectedHardwareSource)
-                                                            val env = pb.environment()
-                                                            val adbDir = java.io.File(adbPath).parent ?: ""
-                                                            val scrcpyDir = java.io.File(AppConfig.scrcpyPath).parent ?: ""
-                                                            env["PATH"] = listOf(adbDir, scrcpyDir, "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin")
-                                                                .filter { it.isNotEmpty() }
-                                                                .joinToString(":") + ":" + (env["PATH"] ?: "")
+                                                    coroutineScope.launch {
+                                                        if (!VideoRecorder.isScrcpyInstalled()) {
+                                                            showDeviceMenu = false
+                                                            showScrcpyInstallDialog = true
+                                                        } else {
+                                                            try {
+                                                                val pb = ProcessBuilder(
+                                                                    AppConfig.scrcpyPath,
+                                                                    "-s",
+                                                                    selectedHardwareSource
+                                                                )
+                                                                val env = pb.environment()
+                                                                val adbDir = java.io.File(adbPath).parent ?: ""
+                                                                val scrcpyDir =
+                                                                    java.io.File(AppConfig.scrcpyPath).parent ?: ""
+                                                                env["PATH"] = listOf(
+                                                                    adbDir,
+                                                                    scrcpyDir,
+                                                                    "/usr/local/bin",
+                                                                    "/opt/homebrew/bin",
+                                                                    "/usr/bin"
+                                                                )
+                                                                    .filter { it.isNotEmpty() }
+                                                                    .joinToString(":") + ":" + (env["PATH"] ?: "")
 
-                                                            pb.redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                                                                .redirectError(ProcessBuilder.Redirect.DISCARD)
-                                                                .start()
+                                                                pb.redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                                                                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                                                                    .start()
 
-                                                            onCommandExecuted("ScreenCopy launched on ${deviceLabel(selectedHardwareSource)} at ${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}")
-                                                        } catch (e: Exception) {
-                                                            onCommandExecuted("Couldn't launch ScreenCopy: ${e.message}")
+                                                                onCommandExecuted(
+                                                                    "ScreenCopy launched on ${
+                                                                        deviceLabel(
+                                                                            selectedHardwareSource
+                                                                        )
+                                                                    } at ${
+                                                                        java.time.LocalDateTime.now().format(
+                                                                            java.time.format.DateTimeFormatter.ofPattern(
+                                                                                "HH:mm"
+                                                                            )
+                                                                        )
+                                                                    }"
+                                                                )
+                                                            } catch (e: Exception) {
+                                                                onCommandExecuted("Couldn't launch ScreenCopy: ${e.message}")
+                                                            }
+                                                            showDeviceMenu = false
                                                         }
-                                                        showDeviceMenu = false
                                                     }
                                                 }
                                             )
@@ -396,7 +445,7 @@ fun deviceSourceDropDown(
                                                 label = "Take Screenshot",
                                                 onClick = {
                                                     coroutineScope.launch {
-                                                        takeScreenshotToClipboard(selectedHardwareSource)
+                                                        withContext(Dispatchers.IO) { takeScreenshotToClipboard(selectedHardwareSource) }
                                                         showDeviceMenu = false
                                                         onCommandExecuted("Screenshot captured to clipboard from ${deviceLabel(selectedHardwareSource)} at ${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}")
                                                     }
@@ -405,8 +454,10 @@ fun deviceSourceDropDown(
                                             deviceMenuItem(
                                                 label = "Take Video via ScreenCopy",
                                                 onClick = {
-                                                    showDeviceMenu = false
-                                                    showVideoDialog = true
+                                                    coroutineScope.launch {
+                                                        showDeviceMenu = false
+                                                        showVideoDialog = true
+                                                    }
                                                 }
                                             )
 
@@ -420,9 +471,12 @@ fun deviceSourceDropDown(
                                                 isDanger = true,
                                                 onClick = {
                                                     coroutineScope.launch {
-                                                        AdbDevices.runCommandFromMap("$adbPath -s $selectedHardwareSource reboot")
+                                                        val label = deviceLabel(selectedHardwareSource)   // capture before the device drops off
+                                                        withContext(Dispatchers.IO) {
+                                                            AdbDevices.runCommandFromMap("$adbPath -s $selectedHardwareSource reboot")
+                                                        }
                                                         showDeviceMenu = false
-                                                        onCommandExecuted("Device ${deviceLabel(selectedHardwareSource)} restarted at ${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}")
+                                                        onCommandExecuted("Device $label restarted at ${java.time.LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))}")
                                                     }
                                                 }
                                             )
@@ -457,7 +511,7 @@ fun deviceSourceDropDown(
                             shape = RoundedCornerShape(8.dp)
                         )
                         .hoverable(triggerInteraction)
-                        .clickable(enabled = commandOptions.isNotEmpty()) {
+                        .clickable(enabled = commandOptions.isNotEmpty() || disconnectedDevices.isNotEmpty()) {
                             isExpanded = true
                         }
                         .focusRequester(focusRequester)
@@ -507,33 +561,146 @@ fun deviceSourceDropDown(
                             .border(1.dp, DropdownColors.dropdownBorder, RoundedCornerShape(8.dp))
                     ) {
                         commandOptions.forEach { deviceId ->
-                            val itemInteraction = remember { MutableInteractionSource() }
-                            val itemHovered by itemInteraction.collectIsHoveredAsState()
-                            val isSelected = deviceId == selectedHardwareSource
+                            key(deviceId) {
+                                val itemInteraction = remember { MutableInteractionSource() }
+                                val itemHovered by itemInteraction.collectIsHoveredAsState()
 
-                            DropdownMenuItem(
-                                onClick = {
-                                    onCommandSelected(deviceId)
-                                    isExpanded = false
-                                },
-                                interactionSource = itemInteraction,
-                                modifier = Modifier
-                                    .background(
-                                        when {
-                                            itemHovered -> DropdownColors.rowHover
-                                            else -> Color.Transparent
-                                        }
+                                DropdownMenuItem(
+                                    onClick = {
+                                        onCommandSelected(deviceId)
+                                        isExpanded = false
+                                    },
+                                    interactionSource = itemInteraction,
+                                    modifier = Modifier.background(if (itemHovered) DropdownColors.rowHover else Color.Transparent)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = formatDeviceDisplay(deviceId),
+                                            fontFamily = AppFontFamily,
+                                            fontSize = 13.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            color = DropdownColors.textPrimary,
+                                            modifier = Modifier.weight(1f)
+                                        )
+
+                                        val busy = actionSerial == deviceId && action == ConnectionAction.DISCONNECTING
+
+                                        connectionActionButton(
+                                            icon = Icons.Default.LinkOff,
+                                            description = "Disconnect",
+                                            busy = busy,
+                                            enabled = action == ConnectionAction.NONE,
+                                            tooltip = "Disconnect from ADB",
+                                            hoverColor = Color(0xFFEF4444),
+                                            onClick = {
+                                                val snapshot = snapshotOf(deviceId)
+                                                actionSerial = deviceId
+                                                action = ConnectionAction.DISCONNECTING
+                                                coroutineScope.launch {
+                                                    val mode = AdbConnectionManager.disconnect(snapshot)
+                                                    action = ConnectionAction.NONE
+                                                    actionSerial = null
+                                                    onCommandExecuted(
+                                                        when (mode) {
+                                                            DisconnectMode.ADB -> "Disconnected ${snapshot.label} from ADB"
+                                                            DisconnectMode.DETACHED -> "Detached ${snapshot.label} (still attached to adb, hidden from Android Helper)"
+                                                        }
+                                                    )
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        AnimatedVisibility(
+                            visible = disconnectedDevices.isNotEmpty(),
+                            enter = fadeIn(tween(200)) + expandVertically(tween(250)),
+                            exit = fadeOut(tween(150)) + shrinkVertically(tween(200))
+                        ) {
+                            Column(modifier = Modifier.animateContentSize()) {
+                                if (commandOptions.isNotEmpty()) {
+                                    Divider(
+                                        color = DropdownColors.divider,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                     )
-                            ) {
+                                }
                                 Text(
-                                    text = formatDeviceDisplay(deviceId),
+                                    "DISCONNECTED",
                                     fontFamily = AppFontFamily,
-                                    fontWeight = if (isSelected) FontWeight.Normal else FontWeight.Normal,
-                                    fontSize = 13.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    color = DropdownColors.textPrimary
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = DropdownColors.textMuted,
+                                    letterSpacing = 0.8.sp,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                                 )
+
+                                disconnectedDevices.forEach { device ->
+                                    key(device.serial) {
+                                        val busy = actionSerial == device.serial && action == ConnectionAction.RECONNECTING
+
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                                                .alpha(if (busy) 1f else 0.55f),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            val emoji = when {
+                                                device.deviceType == DeviceType.TV -> TV
+                                                device.serial.startsWith("emulator", true) -> EMULATOR_COMPUTER
+                                                else -> PHONE_MOBILE
+                                            }
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "(${device.sdkRelease}) $emoji ${device.label}",
+                                                    fontFamily = AppFontFamily,
+                                                    fontSize = 13.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    color = DropdownColors.textMuted
+                                                )
+                                                Text(
+                                                    text = if (device.mode == DisconnectMode.ADB) "Disconnected from ADB"
+                                                    else "Hidden · still attached to adb",
+                                                    fontFamily = AppFontFamily,
+                                                    fontWeight = FontWeight.Light,
+                                                    fontSize = 10.sp,
+                                                    color = DropdownColors.textDim
+                                                )
+                                            }
+
+                                            connectionActionButton(
+                                                icon = Icons.Default.Refresh,
+                                                description = "Reconnect",
+                                                busy = busy,
+                                                enabled = action == ConnectionAction.NONE,
+                                                tooltip = "Reconnect via ADB",
+                                                hoverColor = Color(0xFF22C55E),
+                                                spin = true,
+                                                onClick = {
+                                                    actionSerial = device.serial
+                                                    action = ConnectionAction.RECONNECTING
+                                                    coroutineScope.launch {
+                                                        val result = AdbConnectionManager.reconnect(device)
+                                                        action = ConnectionAction.NONE
+                                                        actionSerial = null
+                                                        onCommandExecuted(
+                                                            result.fold(
+                                                                { "Reconnected ${device.label}" },
+                                                                { "Couldn't reconnect ${device.label}: ${it.message}" }
+                                                            )
+                                                        )
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -780,6 +947,74 @@ private fun deviceMenuItem(
             }
 
         )
+    }
+}
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun connectionActionButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    busy: Boolean,
+    enabled: Boolean,
+    tooltip: String,
+    hoverColor: Color,
+    spin: Boolean = false,
+    onClick: () -> Unit
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val isHovered by interaction.collectIsHoveredAsState()
+
+    val infinite = rememberInfiniteTransition()
+    val rotation by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Restart)
+    )
+
+    TooltipArea(
+        tooltip = {
+            Surface(color = Color(0xFF1A1A1A), shape = RoundedCornerShape(6.dp), elevation = 4.dp) {
+                Text(
+                    tooltip,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    fontFamily = AppFontFamily,
+                    fontSize = 11.sp,
+                    color = Color.White
+                )
+            }
+        },
+        delayMillis = 400
+    ) {
+        IconButton(
+            onClick = onClick,
+            enabled = enabled && !busy,
+            interactionSource = interaction,
+            modifier = Modifier.size(24.dp)
+        ) {
+            Crossfade(targetState = busy, animationSpec = tween(150)) { isBusy ->
+                if (isBusy) {
+                    CircularProgressIndicator(
+                        progress = 0.75f,
+                        color = hoverColor,
+                        strokeWidth = 1.5.dp,
+                        modifier = Modifier.size(14.dp).rotate(rotation)
+                    )
+                } else {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = description,
+                        tint = when {
+                            !enabled -> DropdownColors.textDim.copy(alpha = 0.35f)
+                            isHovered -> hoverColor
+                            else -> DropdownColors.textMuted
+                        },
+                        modifier = Modifier.size(14.dp).then(
+                            if (spin && isHovered) Modifier.rotate(rotation) else Modifier
+                        )
+                    )
+                }
+            }
+        }
     }
 }
 
