@@ -268,7 +268,7 @@ fun workflowButton(
                     return@launch
                 }
                 onReady(token)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 showAuthError = GitHubAuthError.TOKEN_INVALID
             } finally {
                 isCheckingAuth = false
