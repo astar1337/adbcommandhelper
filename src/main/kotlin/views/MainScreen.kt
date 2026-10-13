@@ -2,15 +2,23 @@ package views
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.res.painterResource
@@ -24,10 +32,9 @@ import kotlinx.coroutines.delay
 import utils.helpers.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -79,6 +86,8 @@ fun mainScreen() {
     var hasSelectedApp by remember { mutableStateOf(false) }
 
     var devicesList by remember { mutableStateOf(emptyList<String>()) }
+
+    var hasCompletedInitialScan by remember { mutableStateOf(false) }
 
     var selectedDeviceId by remember { mutableStateOf("") }
     var previousDeviceCount by remember { mutableStateOf(-1) }
@@ -312,6 +321,7 @@ fun mainScreen() {
             AdbConnectionManager.syncWith(raw)
             val newDevices = AdbConnectionManager.visibleDevices(raw)
             devicesList = newDevices
+            hasCompletedInitialScan = true
             val currentCount = newDevices.size
 
             if (previousDeviceCount == 1 && currentCount > 1) {
@@ -367,10 +377,16 @@ fun mainScreen() {
 
     val hasAnyDevice = devicesList.isNotEmpty() || AdbConnectionManager.disconnected.isNotEmpty()
 
-    LaunchedEffect(showClearMessage) {
-        if (showClearMessage) {
-            delay(2000)
-            showClearMessage = false
+    // Header controls stay composed from startup (invisible) so their first
+    // composition/layout/draw doesn't happen mid-fade, which caused a choppy reveal.
+    val headerAlpha by animateFloatAsState(
+        targetValue = if (isDeviceSelected) 1f else 0f,
+        animationSpec = tween(durationMillis = if (isDeviceSelected) 750 else 300),
+        label = "headerAlpha"
+    )
+    val blockWhenHidden = Modifier.pointerInput(Unit) {
+        awaitPointerEventScope {
+            while (true) awaitPointerEvent().changes.forEach { it.consume() }
         }
     }
     Box(modifier = Modifier
@@ -392,8 +408,7 @@ fun mainScreen() {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f, fill = false)
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Image(
                             painter = painterResource("icons/daznlogo.png"),
@@ -406,43 +421,53 @@ fun mainScreen() {
                             fontFamily = AppFontFamily,
                             fontWeight = FontWeight.Bold,
                             fontSize = 28.sp,
-                            color = Color.White
+                            color = Color.White,
+                            maxLines = 1,
+                            softWrap = false
                         )
+                    }
 
-                        AnimatedVisibility(
-                            visible = isDeviceSelected,
-                            enter = fadeIn(animationSpec = tween(300)),
-                            exit = fadeOut(animationSpec = tween(300))
+                    // Takes all remaining space between the title and the toolbar,
+                    // and centers the tutorial icon within it.
+                    Box(
+                        modifier = Modifier.weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier.graphicsLayer { alpha = headerAlpha },
+                            contentAlignment = Alignment.Center
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Spacer(Modifier.width(12.dp))
-                                val tutorialInteraction = remember { MutableInteractionSource() }
-                                val isTutorialHovered by tutorialInteraction.collectIsHoveredAsState()
+                            val tutorialInteraction = remember { MutableInteractionSource() }
+                            val isTutorialHovered by tutorialInteraction.collectIsHoveredAsState()
 
-                                IconButton(
-                                    onClick = {
+                            Box(
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .clip(CircleShape)
+                                    .hoverable(tutorialInteraction)
+                                    .clickable(
+                                        interactionSource = tutorialInteraction,
+                                        indication = null
+                                    ) {
                                         currentStepIndex = 0
                                         tutorialStep = tutorialSteps.getOrNull(0)
                                     },
-                                    interactionSource = tutorialInteraction,
-                                    modifier = Modifier.size(20.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Info,
-                                        contentDescription = "Start tutorial",
-                                        tint = if (isTutorialHovered) Color(0xFFFFEB3B) else Color(0xFF8899AA),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = "Start tutorial",
+                                    tint = if (isTutorialHovered) Color(0xFFFFEB3B) else Color(0xFF8899AA),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            if (!isDeviceSelected) {
+                                Box(Modifier.matchParentSize().then(blockWhenHidden))
                             }
                         }
                     }
 
-                    AnimatedVisibility(
-                        visible = isDeviceSelected,
-                        enter = fadeIn(animationSpec = tween(750)),
-                        exit = fadeOut(animationSpec = tween(750))
-                    ) {
+                    Box(modifier = Modifier.graphicsLayer { alpha = headerAlpha }) {
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -510,6 +535,9 @@ fun mainScreen() {
                                 )
                             }
                         }
+                        if (!isDeviceSelected) {
+                            Box(Modifier.matchParentSize().then(blockWhenHidden))
+                        }
                     }
                 }
             }
@@ -526,11 +554,17 @@ fun mainScreen() {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Crossfade(
-                    targetState = hasAnyDevice,
+                    targetState = when {
+                        !hasCompletedInitialScan -> null
+                        hasAnyDevice -> true
+                        else -> false
+                    },
                     animationSpec = tween(200),
                     modifier = Modifier.weight(1f),
                 ) { deviceConnected ->
-                    if (!deviceConnected) {
+                    if (deviceConnected == null) {
+                        Box(Modifier.fillMaxSize())
+                    } else if (!deviceConnected) {
                         emptyDeviceState(
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -788,4 +822,3 @@ fun mainScreen() {
         }
     }
 }
-

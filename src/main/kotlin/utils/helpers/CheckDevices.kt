@@ -104,11 +104,14 @@ object AdbDevices {
         val devices = mutableListOf<AdbDeviceId>()
 
         val lines = output.lines()
+        val headerIndex = lines.indexOfFirst { it.trim().startsWith("List of devices attached") }
+        val startIndex = if (headerIndex >= 0) headerIndex + 1 else 1
 
-        for (i in 1 until lines.size) {
+        for (i in startIndex until lines.size) {
             val line = lines[i].trim()
 
-            if (line.isEmpty()) continue
+            // Skip empty lines and adb daemon messages like "* daemon started successfully"
+            if (line.isEmpty() || line.startsWith("*")) continue
 
             val parts = line.split(Regex("\\s+"))
 
@@ -130,4 +133,3 @@ object AdbDevices {
         return result.devices.map { it.serialNumber }
     }
 }
-
