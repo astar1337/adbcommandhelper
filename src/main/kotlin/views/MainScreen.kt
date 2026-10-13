@@ -22,9 +22,6 @@ import ui.components.*
 import ui.components.theme.AppFontFamily
 import kotlinx.coroutines.delay
 import utils.helpers.*
-import androidx.compose.runtime.rememberCoroutineScope
-import kotlinx.coroutines.launch
-import commands.formatWorkflowOutput
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,38 +34,58 @@ import kotlinx.coroutines.withContext
 import ui.components.theme.DropdownColors.contentBackgroundColor
 import ui.components.theme.DropdownColors.headerBackgroundColor
 
+private const val DEVICE_PLACEHOLDER = "Select your source..."
+private const val APP_PLACEHOLDER = "Select app..."
+private const val NO_APPS_PLACEHOLDER = "No apps installed"
+private const val ENV_PLACEHOLDER = "Select environment..."
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+private fun toolbarTooltip(text: String, content: @Composable () -> Unit) {
+    TooltipArea(
+        tooltip = {
+            Surface(
+                color = Color(0xFF1A1A1A),
+                shape = RoundedCornerShape(6.dp),
+                elevation = 4.dp
+            ) {
+                Text(
+                    text,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    fontFamily = AppFontFamily,
+                    fontSize = 12.sp,
+                    color = Color.White
+                )
+            }
+        },
+        delayMillis = 250,
+        content = content
+    )
+}
+
+@Composable
 fun mainScreen() {
     var selectedCommand by remember { mutableStateOf<Command?>(null) }
-    val initialDevices = remember { AdbDevices.getDevicesList() }
-    var selectedHardwareSource by remember { mutableStateOf(if (initialDevices.size == 1) initialDevices.first() else "Select your source...") }
-    var selectedEnvSource by remember { mutableStateOf("Select environment...") }
-    var selectedAppSource by remember { mutableStateOf("Select app...") }
+    var selectedHardwareSource by remember { mutableStateOf(DEVICE_PLACEHOLDER) }
+    var selectedEnvSource by remember { mutableStateOf(ENV_PLACEHOLDER) }
+    var selectedAppSource by remember { mutableStateOf(APP_PLACEHOLDER) }
 
     val notificationQueue = remember { mutableStateListOf<Notification>() }
     var activeNotification by remember { mutableStateOf<Notification?>(null) }
     var notificationTrigger by remember { mutableStateOf(0) }
 
-    var hasSelectedDevice by remember { mutableStateOf(initialDevices.size == 1) }
+    var hasSelectedDevice by remember { mutableStateOf(false) }
     var hasSelectedEnv by remember { mutableStateOf(false) }
     var hasSelectedApp by remember { mutableStateOf(false) }
 
-    var devicesList by remember { mutableStateOf(initialDevices) }
-    val refreshTrigger by remember { mutableStateOf(0) }
+    var devicesList by remember { mutableStateOf(emptyList<String>()) }
 
-    var selectedDeviceId by remember { mutableStateOf(if (initialDevices.size == 1) initialDevices.first() else "") }
-    //var outputHistory by remember { mutableStateOf(mutableListOf<String>()) }
+    var selectedDeviceId by remember { mutableStateOf("") }
     var previousDeviceCount by remember { mutableStateOf(-1) }
 
     val isDeviceSelected = (hasSelectedDevice || selectedDeviceId.isNotEmpty()) && devicesList.isNotEmpty()
 
-    val isAppSelected = hasSelectedApp
-    val isEnvSelected = hasSelectedEnv
-
     var selectedEnvValue by remember { mutableStateOf("") }
-    var selectedAppValue by remember { mutableStateOf("") }
 
     var currentNotifState by remember { mutableStateOf(NotificationState.DISABLED) }
     var currentEnvList by remember { mutableStateOf(mapOf<String, String>()) }
@@ -79,24 +96,17 @@ fun mainScreen() {
     var availableAppList by remember { mutableStateOf(mapOf<String, String>()) }
 
     val tutorialTargets = remember { mutableStateMapOf<TutorialStep, Rect>() }
-    var showTutorial by remember { mutableStateOf(false) }
     val tutorialSteps = remember {
         TutorialStep.entries.filter { it != TutorialStep.DONE }
     }
     var currentStepIndex by remember { mutableStateOf(0) }
-    var tutorialStep by remember {
-        mutableStateOf(if (showTutorial) tutorialSteps.getOrNull(0) else null)
-    }
+    var tutorialStep by remember { mutableStateOf<TutorialStep?>(null) }
     var removeZipAfterInstall by remember { mutableStateOf(false) }
 
     var showNavBar by remember { mutableStateOf(false) }
 
-    val coroutineScope = rememberCoroutineScope()
-
-    var isWorkflowDialogOpen by remember { mutableStateOf(false) }
     var cachedDeviceName by remember { mutableStateOf("") }
     var isConsoleExpanded by remember { mutableStateOf(true) }
-    var outputColor by remember { mutableStateOf<Color?>(null) }
     var consoleMessages by remember { mutableStateOf(listOf<ConsoleInstallMessage>()) }
     var showClearMessage by remember { mutableStateOf(false) }
 
@@ -104,29 +114,44 @@ fun mainScreen() {
     var cachedSdk by remember { mutableStateOf(0) }
     var cachedDeviceType by remember { mutableStateOf(DeviceType.MOBILE) }
 
-    fun resetAppAndEnvState() {
-        selectedAppKey = ""
-        selectedAppSource = "Select app..."
-        selectedAppValue = ""
-        hasSelectedApp = false
-
-        installedApps = emptyList()
-        availableAppList = emptyMap()
-
-        currentEnvList = emptyMap()
-        selectedEnvSource = "Select environment..."
+    fun resetEnv() {
+        selectedEnvSource = ENV_PLACEHOLDER
         selectedEnvValue = ""
         hasSelectedEnv = false
+    }
 
+    fun clearAppSelection(placeholder: String = APP_PLACEHOLDER) {
+        selectedAppKey = ""
+        selectedAppSource = placeholder
+        hasSelectedApp = false
+        currentEnvList = emptyMap()
+        resetEnv()
+    }
+
+    fun resetAppAndEnvState() {
+        clearAppSelection()
+        installedApps = emptyList()
+        availableAppList = emptyMap()
         selectedCommand = null
     }
 
-    LaunchedEffect(devicesList, selectedHardwareSource) {
-        if (devicesList.size == 1 && selectedDeviceId.isEmpty()) {
-            val singleDevice = devicesList.first()
-            selectedHardwareSource = singleDevice
-            selectedDeviceId = singleDevice
-            hasSelectedDevice = true
+    fun resetDeviceSelection() {
+        selectedDeviceId = ""
+        selectedHardwareSource = DEVICE_PLACEHOLDER
+        hasSelectedDevice = false
+        cachedDeviceType = DeviceType.MOBILE
+        cachedSdk = 0
+        resetAppAndEnvState()
+    }
+
+    fun enqueueNotifications(vararg notifications: Notification) {
+        if (notifications.isEmpty()) return
+        if (activeNotification == null) {
+            activeNotification = notifications.first()
+            notificationTrigger++
+            notificationQueue.addAll(notifications.drop(1))
+        } else {
+            notificationQueue.addAll(notifications)
         }
     }
 
@@ -138,30 +163,45 @@ fun mainScreen() {
         return envMap
     }
 
+    fun selectApp(app: InstalledApp) {
+        val envList = buildEnvList(app)
+        selectedAppKey = app.key
+        selectedAppSource = app.displayName
+        hasSelectedApp = true
+        currentEnvList = envList
+        if (envList.size == 1) {
+            val env = envList.entries.first()
+            selectedEnvSource = env.key
+            selectedEnvValue = env.value
+            hasSelectedEnv = true
+        } else {
+            resetEnv()
+        }
+    }
+
+    // Auto-select when exactly one device is connected
+    LaunchedEffect(devicesList) {
+        if (devicesList.size == 1 && selectedDeviceId.isEmpty()) {
+            val singleDevice = devicesList.first()
+            selectedHardwareSource = singleDevice
+            selectedDeviceId = singleDevice
+            hasSelectedDevice = true
+        }
+    }
+
     fun refreshEnvForSelectedApp() {
         val app = installedApps.find { it.key == selectedAppKey }
-
         if (app == null) {
-            selectedAppKey = ""
-            selectedAppSource = "Select app..."
-            hasSelectedApp = false
-            currentEnvList = emptyMap()
-            selectedEnvSource = "Select environment..."
-            selectedEnvValue = ""
-            hasSelectedEnv = false
+            clearAppSelection(
+                if (selectedAppSource == NO_APPS_PLACEHOLDER) NO_APPS_PLACEHOLDER else APP_PLACEHOLDER
+            )
             return
         }
 
         val newEnvList = buildEnvList(app)
-
         currentEnvList = newEnvList
 
-        if (selectedEnvValue.isNotEmpty() && selectedEnvValue !in newEnvList.values) {
-            selectedEnvSource = "Select environment..."
-            selectedEnvValue = ""
-            hasSelectedEnv = false
-        }
-
+        val validEnv = newEnvList.entries.find { it.value == selectedEnvValue }
         when {
             newEnvList.size == 1 -> {
                 val env = newEnvList.entries.first()
@@ -170,22 +210,16 @@ fun mainScreen() {
                 hasSelectedEnv = true
             }
 
-            selectedEnvValue.isNotEmpty() && selectedEnvValue in newEnvList.values -> {
-                val validEnv = newEnvList.entries.find { it.value == selectedEnvValue }
-                if (validEnv != null) {
-                    selectedEnvSource = validEnv.key
-                    hasSelectedEnv = true
-                }
+            selectedEnvValue.isNotEmpty() && validEnv != null -> {
+                selectedEnvSource = validEnv.key
+                hasSelectedEnv = true
             }
 
-            else -> {
-                selectedEnvSource = "Select environment..."
-                selectedEnvValue = ""
-                hasSelectedEnv = false
-            }
+            else -> resetEnv()
         }
     }
 
+    // Single place that syncs the env list with the selected app
     LaunchedEffect(installedApps, selectedAppKey) {
         refreshEnvForSelectedApp()
     }
@@ -208,49 +242,15 @@ fun mainScreen() {
             stillInstalled != null -> {
                 selectedAppSource = stillInstalled.displayName
                 hasSelectedApp = true
-                currentEnvList = buildEnvList(stillInstalled)
             }
 
-            newInstalledApps.size == 1 -> {
-                val app = newInstalledApps.first()
-                selectedAppKey = app.key
-                selectedAppSource = app.displayName
-                selectedAppValue = app.key.lowercase()
-                hasSelectedApp = true
-                val envList = buildEnvList(app)
-                currentEnvList = envList
+            newInstalledApps.size == 1 -> selectApp(newInstalledApps.first())
 
-                if (envList.size == 1) {
-                    val env = envList.entries.first()
-                    selectedEnvSource = env.key
-                    selectedEnvValue = env.value
-                    hasSelectedEnv = true
-                }
-            }
+            newInstalledApps.isEmpty() -> clearAppSelection(NO_APPS_PLACEHOLDER)
 
-            newInstalledApps.isEmpty() -> {
-                selectedAppKey = ""
-                selectedAppSource = "No apps installed"
-                selectedAppValue = ""
-                hasSelectedApp = false
-                currentEnvList = emptyMap()
-                selectedEnvSource = "Select environment..."
-                selectedEnvValue = ""
-                hasSelectedEnv = false
-            }
-
-            else -> {
-                selectedAppKey = ""
-                selectedAppSource = "Select app..."
-                selectedAppValue = ""
-                hasSelectedApp = false
-                currentEnvList = emptyMap()
-                selectedEnvSource = "Select environment..."
-                selectedEnvValue = ""
-                hasSelectedEnv = false
-            }
+            else -> clearAppSelection()
         }
-        refreshEnvForSelectedApp()
+        // Env list is refreshed by LaunchedEffect(installedApps, selectedAppKey)
     }
 
     LaunchedEffect(selectedDeviceId) {
@@ -268,9 +268,9 @@ fun mainScreen() {
             refreshInstalledApps()
         }
     }
+
     LaunchedEffect(selectedDeviceId, selectedEnvValue, refreshNotifCounter, cachedDeviceType, cachedSdk) {
-        val type = cachedDeviceType
-        if (type == DeviceType.TV) return@LaunchedEffect      // detecting or TV: skip
+        if (cachedDeviceType == DeviceType.TV) return@LaunchedEffect
         if (selectedDeviceId.isEmpty() || selectedEnvValue.isEmpty()) return@LaunchedEffect
 
         if (refreshNotifCounter > 0) delay(500)   // give pm grant/revoke time to apply
@@ -279,7 +279,16 @@ fun mainScreen() {
         }
     }
 
+    // Reset selected command when device/env changes; otherwise keep the
+    // notification command in sync with the current notification state.
+    var lastSelection by remember { mutableStateOf(selectedDeviceId to selectedEnvValue) }
     LaunchedEffect(currentNotifState, selectedDeviceId, selectedEnvValue) {
+        val selection = selectedDeviceId to selectedEnvValue
+        if (selection != lastSelection) {
+            lastSelection = selection
+            selectedCommand = null
+            return@LaunchedEffect
+        }
         if (
             selectedCommand?.isNotificationPermissionCommand == true &&
             selectedDeviceId.isNotEmpty() &&
@@ -296,9 +305,9 @@ fun mainScreen() {
         }
     }
 
-    LaunchedEffect(refreshTrigger) {
+    // Device polling (first scan runs immediately, off the UI thread)
+    LaunchedEffect(Unit) {
         while (true) {
-            delay(1000)
             val raw = withContext(Dispatchers.IO) { AdbDevices.getDevicesList() }
             AdbConnectionManager.syncWith(raw)
             val newDevices = AdbConnectionManager.visibleDevices(raw)
@@ -306,66 +315,35 @@ fun mainScreen() {
             val currentCount = newDevices.size
 
             if (previousDeviceCount == 1 && currentCount > 1) {
-                selectedDeviceId = ""
-                selectedHardwareSource = "Select a device..."
-                hasSelectedDevice = false
-                cachedDeviceType = DeviceType.MOBILE
-                cachedSdk = 0
-                resetAppAndEnvState()
+                resetDeviceSelection()
             }
 
             if (selectedDeviceId.isNotEmpty() && selectedDeviceId !in newDevices) {
                 DeviceInfoCache.invalidate(selectedDeviceId)
                 AppDetection.forget(selectedDeviceId)
-                selectedDeviceId = ""
-                selectedHardwareSource = "Select your source..."
-                hasSelectedDevice = false
-                cachedDeviceType = DeviceType.MOBILE
-                cachedSdk = 0
-                resetAppAndEnvState()
+                resetDeviceSelection()
             }
 
             if (currentCount != previousDeviceCount && previousDeviceCount != -1) {
-                when {
-                    currentCount < previousDeviceCount -> {
-                        val notifications = mutableListOf(
-                            Notification("Device removed", NotificationType.WARNING)
-                        )
-
-                        when (currentCount) {
-                            0 -> notifications.add(Notification("No devices connected", NotificationType.ERROR))
-                            1 -> notifications.add(Notification("1 device remaining", NotificationType.SUCCESS))
-                            else -> notifications.add(Notification("$currentCount devices remaining", NotificationType.SUCCESS))
-                        }
-
-                        if (activeNotification == null) {
-                            activeNotification = notifications.first()
-                            notificationTrigger++
-                            if (notifications.size > 1) {
-                                notificationQueue.add(notifications[1])
-                            }
-                        } else {
-                            notificationQueue.addAll(notifications)
-                        }
+                if (currentCount < previousDeviceCount) {
+                    val remaining = when (currentCount) {
+                        0 -> Notification("No devices connected", NotificationType.ERROR)
+                        1 -> Notification("1 device remaining", NotificationType.SUCCESS)
+                        else -> Notification("$currentCount devices remaining", NotificationType.SUCCESS)
                     }
-
-                    currentCount >= previousDeviceCount -> {
-                        val notification = if (currentCount == 1) {
-                            Notification("Device connected", NotificationType.SUCCESS)
-                        } else {
-                            Notification("$currentCount devices connected", NotificationType.SUCCESS)
-                        }
-
-                        if (activeNotification == null) {
-                            activeNotification = notification
-                            notificationTrigger++
-                        } else {
-                            notificationQueue.add(notification)
-                        }
-                    }
+                    enqueueNotifications(
+                        Notification("Device removed", NotificationType.WARNING),
+                        remaining
+                    )
+                } else {
+                    enqueueNotifications(
+                        if (currentCount == 1) Notification("Device connected", NotificationType.SUCCESS)
+                        else Notification("$currentCount devices connected", NotificationType.SUCCESS)
+                    )
                 }
             }
             previousDeviceCount = currentCount
+            delay(1000)
         }
     }
 
@@ -375,15 +353,9 @@ fun mainScreen() {
             activeNotification = null
             if (notificationQueue.isNotEmpty()) {
                 delay(300)
-                activeNotification = notificationQueue.removeFirst()
+                activeNotification = notificationQueue.removeAt(0)
                 notificationTrigger++
             }
-        }
-    }
-
-    LaunchedEffect(selectedDeviceId, selectedEnvValue) {
-        if (selectedDeviceId.isNotEmpty() || selectedEnvValue.isNotEmpty()) {
-            selectedCommand = null
         }
     }
 
@@ -438,35 +410,36 @@ fun mainScreen() {
                         )
 
                         AnimatedVisibility(
-                            visible = isDeviceSelected && devicesList.isNotEmpty(),
+                            visible = isDeviceSelected,
                             enter = fadeIn(animationSpec = tween(300)),
                             exit = fadeOut(animationSpec = tween(300))
                         ) {
-                            Spacer(Modifier.width(12.dp))
-                            val tutorialInteraction = remember { MutableInteractionSource() }
-                            val isTutorialHovered by tutorialInteraction.collectIsHoveredAsState()
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Spacer(Modifier.width(12.dp))
+                                val tutorialInteraction = remember { MutableInteractionSource() }
+                                val isTutorialHovered by tutorialInteraction.collectIsHoveredAsState()
 
-                            IconButton(
-                                onClick = {
-                                    showTutorial = true
-                                    currentStepIndex = 0
-                                    tutorialStep = tutorialSteps.getOrNull(0)
-                                },
-                                interactionSource = tutorialInteraction,
-                                modifier = Modifier.size(18.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Info,
-                                    contentDescription = "Start tutorial",
-                                    tint = if (isTutorialHovered) Color(0xFFFFEB3B) else Color(0xFF8899AA),
+                                IconButton(
+                                    onClick = {
+                                        currentStepIndex = 0
+                                        tutorialStep = tutorialSteps.getOrNull(0)
+                                    },
+                                    interactionSource = tutorialInteraction,
                                     modifier = Modifier.size(20.dp)
-                                )
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Info,
+                                        contentDescription = "Start tutorial",
+                                        tint = if (isTutorialHovered) Color(0xFFFFEB3B) else Color(0xFF8899AA),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
                             }
                         }
                     }
 
                     AnimatedVisibility(
-                        visible = isDeviceSelected && devicesList.isNotEmpty(),
+                        visible = isDeviceSelected,
                         enter = fadeIn(animationSpec = tween(750)),
                         exit = fadeOut(animationSpec = tween(750))
                     ) {
@@ -478,30 +451,12 @@ fun mainScreen() {
                                     coords.boundsInWindow()
                             }
                         ) {
-                            TooltipArea(
-                                tooltip = {
-                                    Surface(
-                                        color = Color(0xFF1A1A1A),
-                                        shape = RoundedCornerShape(6.dp),
-                                        elevation = 4.dp
-                                    ) {
-                                        Text(
-                                            "Run CI/CD Workflow",
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                            fontFamily = AppFontFamily,
-                                            fontSize = 12.sp,
-                                            color = Color.White
-                                        )
-                                    }
-                                },
-                                delayMillis = 250
-                            ) {
+                            toolbarTooltip("Run CI/CD Workflow") {
                                 workflowButton(
                                     onWorkflowTriggered = { result ->
                                         val output = formatWorkflowOutput(result)
                                         consoleMessages = consoleMessages + ConsoleInstallMessage.Text(output)
                                         showClearMessage = false
-                                        isWorkflowDialogOpen = false
                                     },
                                     onConsoleOutput = { newMessage ->
                                         consoleMessages = consoleMessages + newMessage
@@ -510,64 +465,24 @@ fun mainScreen() {
                                 )
                             }
 
-                            TooltipArea(
-                                tooltip = {
-                                    Surface(
-                                        color = Color(0xFF1A1A1A),
-                                        shape = RoundedCornerShape(6.dp),
-                                        elevation = 4.dp
-                                    ) {
-                                        Text(
-                                            "Select a VPN gateway",
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                            fontFamily = AppFontFamily,
-                                            fontSize = 12.sp,
-                                            color = Color.White
-                                        )
-                                    }
-                                },
-                                delayMillis = 250
-                            ) {
+                            toolbarTooltip("Select a VPN gateway") {
                                 vpnButton(
                                     modifier = Modifier.height(48.dp),
-                                    onCommandExecuted = { output, color ->
+                                    onCommandExecuted = { output, _ ->
                                         consoleMessages = consoleMessages + ConsoleInstallMessage.Text(output)
-                                        outputColor = color
                                     },
                                     deviceId = selectedDeviceId,
                                     deviceName = cachedDeviceName,
-                                    onCommandReplaced = { output, color ->
-                                        consoleMessages = if (consoleMessages.isNotEmpty()) {
-                                            consoleMessages.dropLast(1) + ConsoleInstallMessage.Text(output)
-                                        } else {
-                                            listOf(ConsoleInstallMessage.Text(output))
-                                        }
-                                        outputColor = color
+                                    onCommandReplaced = { output, _ ->
+                                        consoleMessages = consoleMessages.dropLast(1) + ConsoleInstallMessage.Text(output)
                                     }
                                 )
                             }
 
-                            TooltipArea(
-                                tooltip = {
-                                    Surface(
-                                        color = Color(0xFF1A1A1A),
-                                        shape = RoundedCornerShape(6.dp),
-                                        elevation = 4.dp
-                                    ) {
-                                        Text(
-                                            "Install a build from apk or zip file",
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                            fontFamily = AppFontFamily,
-                                            fontSize = 12.sp,
-                                            color = Color.White
-                                        )
-                                    }
-                                },
-                                delayMillis = 250
-                            ) {
+                            toolbarTooltip("Install a build from apk or zip file") {
                                 zipApkInstaller(
                                     deviceId = selectedDeviceId,
-                                    enabled = isDeviceSelected && devicesList.isNotEmpty(),
+                                    enabled = isDeviceSelected,
                                     removeZipAfterInstall = removeZipAfterInstall,
                                     onInstallStarted = { newMessage ->
                                         consoleMessages = consoleMessages + newMessage
@@ -579,24 +494,7 @@ fun mainScreen() {
                                 )
                             }
 
-                            TooltipArea(
-                                tooltip = {
-                                    Surface(
-                                        color = Color(0xFF1A1A1A),
-                                        shape = RoundedCornerShape(6.dp),
-                                        elevation = 4.dp
-                                    ) {
-                                        Text(
-                                            "App Settings",
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                            fontFamily = AppFontFamily,
-                                            fontSize = 12.sp,
-                                            color = Color.White
-                                        )
-                                    }
-                                },
-                                delayMillis = 250
-                            ) {
+                            toolbarTooltip("App Settings") {
                                 additionalSettings(
                                     deviceId = selectedDeviceId,
                                     removeZipAfterInstall = removeZipAfterInstall,
@@ -642,37 +540,26 @@ fun mainScreen() {
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Crossfade(
-                                    targetState = hasAnyDevice,
-                                    animationSpec = tween(200),
-                                    modifier = Modifier.weight(1f)
-                                ) { hasDevices ->
-                                    if (!hasDevices) {
-                                        skeletonDropdown(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            message = "No devices connected"
-                                        )
-                                    } else {
-                                        deviceSourceDropDown(
-                                            selectedHardwareSource = selectedHardwareSource,
-                                            commandOptions = devicesList,
-                                            onCommandSelected = { deviceId ->
-                                                selectedHardwareSource = deviceId
-                                                selectedDeviceId = deviceId
-                                                hasSelectedDevice = true
+                                Box(modifier = Modifier.weight(1f)) {
+                                    deviceSourceDropDown(
+                                        selectedHardwareSource = selectedHardwareSource,
+                                        commandOptions = devicesList,
+                                        onCommandSelected = { deviceId ->
+                                            selectedHardwareSource = deviceId
+                                            selectedDeviceId = deviceId
+                                            hasSelectedDevice = true
+                                        },
+                                        onCommandExecuted = { output ->
+                                            consoleMessages = consoleMessages + ConsoleInstallMessage.Text(output)
+                                            showClearMessage = false
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                            .onGloballyPositioned { coords ->
+                                                tutorialTargets[TutorialStep.DEVICE_DROPDOWN] =
+                                                    coords.boundsInWindow()
                                             },
-                                            onCommandExecuted = { output ->
-                                                consoleMessages = consoleMessages + ConsoleInstallMessage.Text(output)
-                                                showClearMessage = false
-                                            },
-                                            modifier = Modifier.fillMaxWidth()
-                                                .onGloballyPositioned { coords ->
-                                                    tutorialTargets[TutorialStep.DEVICE_DROPDOWN] =
-                                                        coords.boundsInWindow()
-                                                },
-                                            elementId = "device_dropdown"
-                                        )
-                                    }
+                                        elementId = "device_dropdown"
+                                    )
                                 }
 
                                 Crossfade(
@@ -692,7 +579,7 @@ fun mainScreen() {
                                         )
                                     } else {
                                         appSelectDropDown(
-                                            enabled = isDeviceSelected && devicesList.isNotEmpty() && availableAppList.isNotEmpty(),
+                                            enabled = isDeviceSelected && availableAppList.isNotEmpty(),
                                             selectedHardwareSource = selectedHardwareSource,
                                             hasSelectedDevice = hasSelectedDevice,
                                             hasSelectedApp = hasSelectedApp,
@@ -702,25 +589,7 @@ fun mainScreen() {
                                             selectedAppSource = selectedAppSource,
                                             selectedPackage = selectedEnvValue,
                                             onCommandSelected = { appKey ->
-                                                val app = installedApps.find { it.key == appKey }
-                                                if (app != null) {
-                                                    val envList = buildEnvList(app)
-                                                    selectedAppKey = appKey
-                                                    selectedAppSource = app.displayName
-                                                    selectedAppValue = appKey.lowercase()
-                                                    hasSelectedApp = true
-                                                    currentEnvList = envList
-                                                    if (envList.size == 1) {
-                                                        val envEntry = envList.entries.first()
-                                                        selectedEnvSource = envEntry.key
-                                                        selectedEnvValue = envEntry.value
-                                                        hasSelectedEnv = true
-                                                    } else {
-                                                        selectedEnvSource = "Select environment..."
-                                                        selectedEnvValue = ""
-                                                        hasSelectedEnv = false
-                                                    }
-                                                }
+                                                installedApps.find { it.key == appKey }?.let { selectApp(it) }
                                             },
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -732,7 +601,7 @@ fun mainScreen() {
                                 }
 
                                 Crossfade(
-                                    targetState = isAppSelected && currentEnvList.isNotEmpty(),
+                                    targetState = hasSelectedApp && currentEnvList.isNotEmpty(),
                                     animationSpec = tween(200),
                                     modifier = Modifier.weight(1f)
                                 ) { hasEnv ->
@@ -769,7 +638,7 @@ fun mainScreen() {
                             Spacer(modifier = Modifier.height(20.dp))
 
                             Crossfade(
-                                targetState = isAppSelected && isEnvSelected,
+                                targetState = hasSelectedApp && hasSelectedEnv,
                                 animationSpec = tween(300)
                             ) { ready ->
                                 if (!ready) {
@@ -780,7 +649,7 @@ fun mainScreen() {
                                                 tutorialTargets[TutorialStep.QUICK_ACTIONS] =
                                                     coords.boundsInWindow()
                                             },
-                                        isAppSelected = isAppSelected
+                                        isAppSelected = hasSelectedApp
                                     )
                                 } else {
                                     val quickCommands = remember(
@@ -798,15 +667,14 @@ fun mainScreen() {
                                         )
                                     }
                                     commandDropdown(
-                                        enabled = isDeviceSelected && devicesList.isNotEmpty() && isAppSelected && isEnvSelected,
+                                        enabled = isDeviceSelected && hasSelectedApp && hasSelectedEnv,
                                         commandOptions = quickCommands,
                                         deviceType = cachedDeviceType,
                                         onCommandSelected = { selectedCommand = it },
-                                        onCommandExecuted = { newMessage,color ->
+                                        onCommandExecuted = { newMessage, _ ->
                                             consoleMessages = consoleMessages + newMessage
                                             showClearMessage = false
                                             refreshNotifCounter++
-                                            outputColor = color
                                         },
                                         selectedDeviceId = selectedDeviceId,
                                         selectedAppSource = selectedAppSource,
@@ -819,16 +687,11 @@ fun mainScreen() {
                                                 tutorialTargets[TutorialStep.QUICK_ACTIONS] =
                                                     coords.boundsInWindow()
                                             },
-                                        onCommandReplaced = { newMessage, color ->
-                                            consoleMessages = if (consoleMessages.isNotEmpty()) {
-                                                consoleMessages.dropLast(1) + newMessage
-                                            } else {
-                                                listOf(newMessage)
-                                            }
-                                            outputColor = color
+                                        onCommandReplaced = { newMessage, _ ->
+                                            consoleMessages = consoleMessages.dropLast(1) + newMessage
                                         },
                                         selectedAppKey = selectedAppKey,
-                                        )
+                                    )
                                 }
                             }
 
@@ -842,13 +705,11 @@ fun mainScreen() {
                                 },
                                 emptyStateMessage = emptyStateText,
                                 isCleared = showClearMessage,
-                                enabled = isDeviceSelected && devicesList.isNotEmpty(),
+                                enabled = isDeviceSelected,
                                 deviceId = selectedDeviceId,
                                 removeZipAfterInstall = removeZipAfterInstall,
                                 onNewMessage = { newMessage ->
-                                    if (showClearMessage) {
-                                        showClearMessage = false
-                                    }
+                                    showClearMessage = false
                                     consoleMessages = consoleMessages + newMessage
                                 },
                                 onExpandChanged = { isConsoleExpanded = it },
@@ -871,10 +732,8 @@ fun mainScreen() {
                     version = "3.0.1",
                     githubUrl = "https://github.com/astar1337/adbcommandhelper"
                 )
-
             }
         }
-
 
         notificationHost(
             notification = activeNotification,
@@ -884,7 +743,7 @@ fun mainScreen() {
         )
 
         AnimatedVisibility(
-            visible = isDeviceSelected && devicesList.isNotEmpty(),
+            visible = isDeviceSelected,
             enter = fadeIn(animationSpec = tween(300)),
             exit = fadeOut(animationSpec = tween(300)),
         ) {
@@ -921,23 +780,12 @@ fun mainScreen() {
                     },
                     stepIndex = currentStepIndex,
                     stepCount = tutorialSteps.size,
-                    onSkip = {
-                        showTutorial = false
-                        tutorialStep = null
-                        coroutineScope.launch {
-                            delay(200)
-                        }
-                    },
-                    onFinish = {
-                        showTutorial = false
-                        tutorialStep = null
-                        coroutineScope.launch {
-                            delay(200)
-                        }
-                    },
+                    onSkip = { tutorialStep = null },
+                    onFinish = { tutorialStep = null },
                     tooltipAtTop = step == TutorialStep.CONSOLE || step == TutorialStep.QUICK_ACTIONS
                 )
             }
         }
     }
 }
+
