@@ -180,7 +180,6 @@ fun zipApkInstaller(
         variantSelectionDialog(
             zipFileName = zipName,
             onVariantSelected = { variant ->
-                showVariantDialog = false
                 coroutineScope.launch {
                     isProcessing = true
                     try {
@@ -201,13 +200,10 @@ fun zipApkInstaller(
                         )
                     } finally {
                         isProcessing = false
-                        selectedZipPath = null
                     }
                 }
             },
             onDismiss = {
-                showVariantDialog = false
-                selectedZipPath = null
             }
         )
     }
@@ -226,8 +222,8 @@ fun zipApkInstaller(
             border = null,
             modifier = Modifier
                 .fillMaxHeight()
-                .onPointerEvent(PointerEventType.Enter) { isHovering = true }
-                .onPointerEvent(PointerEventType.Exit) { isHovering = false }
+                .onPointerEvent(PointerEventType.Enter) { }
+                .onPointerEvent(PointerEventType.Exit) { }
                 .drawBehind {
                     val borderWidth = 3.dp.toPx()
                     val gradient = Brush.sweepGradient(gradientColors)
@@ -493,7 +489,7 @@ internal suspend fun unzipAndInstall(
                         filePath = extractDir.absolutePath,
                         permanentlyDelete = permanentlyDelete
                     )
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     // If moving to trash fails, just delete it
                     extractDir.deleteRecursively()
                 }
