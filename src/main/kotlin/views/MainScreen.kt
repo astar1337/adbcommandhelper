@@ -377,8 +377,6 @@ fun mainScreen() {
 
     val hasAnyDevice = devicesList.isNotEmpty() || AdbConnectionManager.disconnected.isNotEmpty()
 
-    // Header controls stay composed from startup (invisible) so their first
-    // composition/layout/draw doesn't happen mid-fade, which caused a choppy reveal.
     val headerAlpha by animateFloatAsState(
         targetValue = if (isDeviceSelected) 1f else 0f,
         animationSpec = tween(durationMillis = if (isDeviceSelected) 750 else 300),
@@ -592,7 +590,6 @@ fun mainScreen() {
                                                 tutorialTargets[TutorialStep.DEVICE_DROPDOWN] =
                                                     coords.boundsInWindow()
                                             },
-                                        elementId = "device_dropdown"
                                     )
                                 }
 

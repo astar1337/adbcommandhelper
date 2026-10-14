@@ -1,3 +1,5 @@
+@file:Suppress("ASSIGNED_VALUE_IS_NEVER_READ", "AssignedValueIsNeverRead")
+
 package ui.components
 
 import androidx.compose.foundation.*
@@ -33,7 +35,6 @@ import ui.components.theme.gradientColorsIcons
 import utils.helpers.AdbDevices.runCommandFromMap
 import androidx.compose.ui.window.Dialog
 import commands.QuickActionType
-import commands.mpRegion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import utils.helpers.*
@@ -100,7 +101,6 @@ fun commandDropdown(
     var pendingDeleteCommand by remember { mutableStateOf<Command?>(null) }
 
     var showMarcoPoloDialog by remember { mutableStateOf(false) }
-    var storedOriginalGuid by remember { mutableStateOf("") }
     var currentDeviceGuid by remember { mutableStateOf("") }
     var showAutomationDialog by remember { mutableStateOf(false) }
     var showClearPhoneDialog by remember { mutableStateOf(false) }
@@ -444,14 +444,8 @@ fun commandDropdown(
                                                 isMarcoPolo -> {
                                                     if (!supportsMarcoPolo) return@let
                                                     scope.launch {
-                                                        val fetchedGuid = withContext(Dispatchers.IO) {
+                                                        currentDeviceGuid = withContext(Dispatchers.IO) {
                                                             getAppGUID(selectedDeviceId, selectedEnvValue)
-                                                        }
-                                                        currentDeviceGuid = fetchedGuid
-                                                        val isAlreadyRegionGuid =
-                                                            mpRegion.any { region -> region.guid == fetchedGuid }
-                                                        if (!isAlreadyRegionGuid) {
-                                                            storedOriginalGuid = fetchedGuid
                                                         }
                                                         showMarcoPoloDialog = true
                                                     }

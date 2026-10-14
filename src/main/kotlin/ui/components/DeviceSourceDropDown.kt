@@ -63,7 +63,6 @@ fun deviceSourceDropDown(
     commandOptions: List<String>,
     onCommandSelected: (String) -> Unit,
     modifier: Modifier = Modifier,
-    elementId: String = "device_dropdown",
     onCommandExecuted: (String) -> Unit = {},
 ) {
     var dropdownWidth by remember { mutableStateOf(0.dp) }
