@@ -1,6 +1,6 @@
 # Android Helper
 
-A Kotlin Compose Desktop app that wraps ADB, Maestro UI automation, and GitHub Actions into a single GUI for QA on DAZN, Kayo Sports, and Binge.
+A Kotlin Compose Desktop app that wraps ADB, Maestro UI automation, and GitHub Actions into a single GUI for QA.
 <img width="775" height="581" alt="image" src="https://github.com/user-attachments/assets/88b57b9e-cf93-4953-86fc-000b64f9205b" />
 
 ---
